@@ -66,7 +66,8 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 .check { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--dim); white-space: nowrap; }
 .check input { accent-color: var(--accent); width: 18px; height: 18px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
-.chip { background: var(--surface-2); border-radius: 100px; padding: 9px 14px; font-size: 14px; }
+.chip { background: var(--surface-2); color: #dfe1f0; border-radius: 12px; padding: 4px 10px; line-height: 0; }
+.chip svg { display: block; }
 .chip.active { background: var(--accent); color: #fff; }
 
 .sheet {
@@ -80,14 +81,13 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
   padding: 18px 16px calc(18px + env(safe-area-inset-bottom));
 }
 .sheet-title { font-size: 16px; font-weight: 600; margin-bottom: 8px; text-align: center; }
+#sheetList { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 6px; }
 .sheet-row {
-  display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%;
-  background: none; text-align: left; padding: 14px 8px; border-bottom: 1px solid var(--surface-2); font-size: 15px;
+  display: flex; align-items: center; justify-content: center; width: 100%; line-height: 0;
+  background: none; color: #dfe1f0; text-align: left; padding: 8px 12px; border-radius: 12px;
 }
-.sheet-row.active { color: var(--accent-2); font-weight: 600; }
-.bits { display: inline-flex; gap: 2px; flex-shrink: 0; }
-.bits i { width: 8px; height: 14px; border-radius: 2px; background: var(--surface-2); }
-.bits i.on { background: var(--blue); }
+.sheet-row svg { display: block; }
+.sheet-row.active { background: var(--surface-2); color: var(--accent-2); }
 
 .play-bar {
   position: fixed; left: 0; right: 0; bottom: 0;

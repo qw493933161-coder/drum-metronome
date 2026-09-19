@@ -170,8 +170,106 @@
     $('subdivHint').textContent = SUB_NAMES[s.subdiv];
     $('ticks').checked = s.ticks;
   }
-  function strip(bits) {
-    return '<span class="bits">' + [...bits].map((b) => `<i class="${b === '1' ? 'on' : ''}"></i>`).join('') + '</span>';
+  // ---------- 一拍的节奏记谱（SVG）：每个音持续到下一个音，末音持续到拍末 ----------
+  const NOTE_VALUES = [ // [占一拍的比例, 符尾/连音线数, 附点数]
+    [1, 0, 0], [0.75, 1, 1], [0.5, 1, 0], [0.375, 2, 1], [0.25, 2, 0], [0.1875, 3, 1], [0.125, 3, 0]
+  ];
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  const isPow2 = (x) => x > 0 && (x & (x - 1)) === 0;
+  const nearestValue = (r) => NOTE_VALUES.reduce((best, v) => (Math.abs(v[0] - r) < Math.abs(best[0] - r) ? v : best));
+
+  function rhythmEvents(bits) {
+    const n = bits.length;
+    const hits = [];
+    [...bits].forEach((b, i) => { if (b === '1') hits.push(i); });
+    const ev = [];
+    if (!hits.length) ev.push({ rest: true, dur: n });
+    else {
+      if (hits[0] > 0) ev.push({ rest: true, dur: hits[0] });
+      hits.forEach((h, i) => ev.push({ rest: false, dur: (i + 1 < hits.length ? hits[i + 1] : n) - h }));
+    }
+    const g = ev.reduce((acc, e) => gcd(acc, e.dur), n);
+    const N = n / g;
+    const tuplet = !isPow2(N);
+    let base = 1;
+    while (base * 2 <= N) base *= 2;
+    const denom = tuplet ? base : N;
+    ev.forEach((e) => { const v = nearestValue(e.dur / g / denom); e.beams = v[1]; e.dots = v[2]; });
+    return { ev, tuplet: tuplet ? N : 0 };
+  }
+
+  function figure(bits, scale) {
+    const { ev, tuplet } = rhythmEvents(bits);
+    const SP = 15, HEAD_Y = 35, BEAM_Y = 13, H = 46;
+    const pos = [];
+    let x = 9;
+    ev.forEach((e) => { pos.push(x); x += SP + (e.dots ? 5 : 0); });
+    const W = x - SP + 13 + (ev[ev.length - 1].dots ? 5 : 0);
+    const stemX = (i) => pos[i] + 4.2;
+    let s = `<line x1="2" y1="${HEAD_Y}" x2="${W - 2}" y2="${HEAD_Y}" stroke="currentColor" stroke-width="1" opacity=".3"/>`;
+
+    // beam groups: runs of consecutive notes (rests break them) that carry at least one beam
+    const grouped = new Set();
+    const groups = [];
+    let run = [];
+    ev.forEach((e, i) => {
+      if (!e.rest && e.beams >= 1) run.push(i);
+      else { if (run.length >= 2) groups.push(run); run = []; }
+    });
+    if (run.length >= 2) groups.push(run);
+    groups.forEach((g) => g.forEach((i) => grouped.add(i)));
+
+    groups.forEach((g) => {
+      for (let level = 1; level <= 3; level++) {
+        const y = BEAM_Y + (level - 1) * 4.6;
+        g.forEach((i, k) => {
+          if (ev[i].beams < level) return;
+          const next = g[k + 1], prev = g[k - 1];
+          if (next !== undefined && ev[next].beams >= level) {
+            s += `<rect x="${stemX(i) - 0.7}" y="${y}" width="${stemX(next) - stemX(i) + 1.4}" height="2.6" fill="currentColor"/>`;
+          } else if (!(prev !== undefined && ev[prev].beams >= level)) {
+            const toRight = next !== undefined;
+            s += `<rect x="${toRight ? stemX(i) - 0.7 : stemX(i) - 5.7}" y="${y}" width="6.4" height="2.6" fill="currentColor"/>`;
+          }
+        });
+      }
+    });
+
+    ev.forEach((e, i) => {
+      const c = pos[i];
+      if (!e.rest) {
+        s += `<ellipse cx="${c}" cy="${HEAD_Y}" rx="4.6" ry="3.4" transform="rotate(-20 ${c} ${HEAD_Y})" fill="currentColor"/>`;
+        s += `<line x1="${stemX(i)}" y1="${HEAD_Y - 1}" x2="${stemX(i)}" y2="${BEAM_Y}" stroke="currentColor" stroke-width="1.5"/>`;
+        if (e.beams >= 1 && !grouped.has(i)) {
+          for (let level = 0; level < e.beams; level++) {
+            const fy = BEAM_Y + level * 4.6;
+            s += `<path d="M${stemX(i)} ${fy} q 7 4 5 12" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>`;
+          }
+        }
+        if (e.dots) s += `<circle cx="${c + 9.5}" cy="${HEAD_Y - 3}" r="1.5" fill="currentColor"/>`;
+      } else {
+        if (e.beams === 0) {
+          s += `<path d="M${c - 2} 16 L${c + 3} 22 L${c - 2.5} 28 L${c + 2} 33 q -4.5 1.5 -3 6.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/>`;
+        } else {
+          const bottom = 37 + (e.beams - 1) * 3;
+          s += `<path d="M${c + 3.5} 17 L${c - 1.5} ${bottom}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>`;
+          for (let k = 0; k < e.beams; k++) {
+            const cy = 22 + k * 6;
+            s += `<circle cx="${c - 1.5 + (k ? -1.3 * k : 0)}" cy="${cy}" r="2" fill="currentColor"/>`;
+            s += `<path d="M${c - 1.5 - 1.3 * k} ${cy} q 3.5 0 5 -3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>`;
+          }
+        }
+        if (e.dots) s += `<circle cx="${c + 7.5}" cy="27" r="1.5" fill="currentColor"/>`;
+      }
+    });
+
+    if (tuplet) {
+      const x1 = pos[0] - 5, x2 = pos[pos.length - 1] + 7, mid = (x1 + x2) / 2;
+      s += `<path d="M${x1} 10 V7 H${mid - 5} M${mid + 5} 7 H${x2} V10" fill="none" stroke="currentColor" stroke-width="1.2"/>`;
+      s += `<text x="${mid}" y="10.4" text-anchor="middle" font-size="9.5" font-style="italic" fill="currentColor" font-family="serif">${tuplet}</text>`;
+    }
+    const k = scale || 0.85;
+    return `<svg viewBox="0 0 ${W} ${H}" width="${Math.round(W * k)}" height="${Math.round(H * k)}" aria-hidden="true">${s}</svg>`;
   }
   function renderBeats() {
     const host = $('beats');
@@ -207,7 +305,9 @@
       const btn = document.createElement('button');
       btn.className = 'chip' + (s.cells.every((c) => c === item.bits) ? ' active' : '');
       btn.dataset.bits = item.bits;
-      btn.textContent = item.short;
+      btn.setAttribute('aria-label', item.name);
+      btn.title = item.name;
+      btn.innerHTML = figure(item.bits, 0.85);
       host.appendChild(btn);
     });
   }
@@ -256,7 +356,8 @@
     catalog(s.subdiv).forEach((item) => {
       const row = document.createElement('button');
       row.className = 'sheet-row' + (s.cells[beat] === item.bits ? ' active' : '');
-      row.innerHTML = `<span>${item.name}</span>${strip(item.bits)}`;
+      row.setAttribute('aria-label', item.name);
+      row.innerHTML = figure(item.bits, 1);
       row.addEventListener('click', () => { applyBeat(beat, item.bits); closeSheet(); });
       list.appendChild(row);
     });
