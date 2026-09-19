@@ -52,6 +52,7 @@
     combo: Array.isArray(saved.combo) ? saved.combo : null,
     ctab: ['long', 'six', 'trip', 'sync'].includes(saved.ctab) ? saved.ctab : 'long',
     cclick: saved.cclick !== false,
+    dtext: typeof saved.dtext === 'string' ? saved.dtext.slice(0, 2000) : '',
     avOffset: Number.isFinite(saved.avOffset) ? Math.max(-80, Math.min(500, Math.round(saved.avOffset))) : 0,
     mine: Array.isArray(saved.mine) ? saved.mine.filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string' && Array.isArray(m.seq)) : [],
     curMine: typeof saved.curMine === 'string' ? saved.curMine : null,
@@ -1405,7 +1406,7 @@
       row.className = 'g-item mine' + (m.id === s.curMine ? ' active' : '');
       row.dataset.id = m.id;
       const bars = layoutCombo(sanitizeCombo(m.seq)).rows.length;
-      row.innerHTML = `<span class="g-name">${m.name.replace(/[<>&]/g, '')}<small>${bars} 小节</small></span><button class="mine-del" data-del="${m.id}" aria-label="删除">✕</button>`;
+      row.innerHTML = `<span class="g-name">${m.name.replace(/[<>&]/g, '')}<small>${bars} 小节</small></span><span class="mine-btns"><button class="mine-exp" data-exp="${m.id}">导出</button><button class="mine-del" data-del="${m.id}" aria-label="删除">✕</button></span>`;
       host.appendChild(row);
     });
   }
@@ -1449,6 +1450,12 @@
   });
   $('cSaveAs').addEventListener('click', saveAs);
   $('cMine').addEventListener('click', (e) => {
+    const exp = e.target.closest('.mine-exp');
+    if (exp) {
+      const m = s.mine.find((x) => x.id === exp.dataset.exp);
+      if (m) openExportSheet([m]);
+      return;
+    }
     const del = e.target.closest('.mine-del');
     if (del) {
       const m = s.mine.find((x) => x.id === del.dataset.del);
@@ -1464,6 +1471,135 @@
     const m = s.mine.find((x) => x.id === row.dataset.id);
     if (m) commit(sanitizeCombo(m.seq), { cur: m.id });
   });
+  // ---- 数字记谱：每 4 个字符一拍，数字 = 这一拍里要打的第几个十六分音，"." = 不打 ----
+  // 例：123. → 前十六后八，1.34 → 前八后十六，12.. → 十六分+附点八分，1234 → 四个十六分
+  const REST_CH = /[.。．·\-0]/;
+  function parseDigits(text) {
+    const norm = String(text)
+      .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
+      .replace(/[Ｔ]/g, 'T');
+    const toks = norm.split(/[\s|,，、;；]+/).filter(Boolean);
+    if (!toks.length) throw new Error('先输入数字，比如 123. 1.34 12.. 1234');
+    if (toks.length > 200) throw new Error('一次最多输入 200 拍');
+    return toks.map((raw, i) => {
+      const trip = /^[tT]/.test(raw);
+      const body = trip ? raw.slice(1) : raw;
+      const n = trip ? 3 : 4;
+      const where = `第 ${i + 1} 拍「${raw}」`;
+      if (!body || body.length > n) throw new Error(`${where}：一拍最多 ${n} 个字符${trip ? '（三连音）' : ''}`);
+      const bits = new Array(n).fill(0);
+      [...body].forEach((ch, idx) => {
+        if (REST_CH.test(ch)) return;
+        if (!/[1-9]/.test(ch)) throw new Error(`${where}：只能写数字 1 到 ${n} 和 “.”，出现了 “${ch}”`);
+        const d = Number(ch);
+        if (d > n) throw new Error(`${where}：${trip ? '三连音一拍只有 1 2 3' : '一拍只有 1 2 3 4'}，出现了 ${d}`);
+        if (body.length === n && d !== idx + 1) throw new Error(`${where}：第 ${idx + 1} 个字符位置对不上，应该写 ${idx + 1} 或 “.”`);
+        bits[d - 1] = 1;
+      });
+      return C(bits.join(''));
+    });
+  }
+  function applyDigits(mode) {
+    const msg = $('dMsg');
+    try {
+      const figs = parseDigits($('dText').value);
+      const next = mode === 'append' ? sanitizeCombo(s.combo.concat(figs)) : figs;
+      const added = next.length - (mode === 'append' ? s.combo.length : 0);
+      if (mode === 'append' && added < figs.length) throw new Error('追加不下：谱子的总小节数太多');
+      commit(next, { cur: mode === 'append' ? s.curMine : null });
+      const bars = Math.ceil(next.length / 4);
+      msg.className = 'digit-msg ok';
+      msg.textContent = `已${mode === 'append' ? '追加' : '生成'} ${figs.length} 拍，谱子现在共 ${bars} 小节（点上面的“撤销”可以退回）`;
+    } catch (e) {
+      msg.className = 'digit-msg err';
+      msg.textContent = e.message;
+    }
+  }
+  $('dText').value = s.dtext || '';
+  $('dText').addEventListener('input', (e) => { s.dtext = e.target.value.slice(0, 2000); save(); });
+  $('dReplace').addEventListener('click', () => applyDigits('replace'));
+  $('dAppend').addEventListener('click', () => applyDigits('append'));
+
+  // ---- 我的谱：导出 / 导入（文字代码，用微信、备忘录等发到别的设备）----
+  function b64e(str) {
+    let bin = '';
+    new TextEncoder().encode(str).forEach((b) => { bin += String.fromCharCode(b); });
+    return btoa(bin);
+  }
+  function b64d(b64) { return new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))); }
+  const figTok = (f) => (f.k === 'c' ? 'c' + f.b : f.k + f.d);
+  function tokFig(t) {
+    if (/^c[01]{3,4}$/.test(t)) return C(t.slice(1));
+    if (/^[nr]\d+$/.test(t)) return t[0] === 'n' ? N(Number(t.slice(1))) : R(Number(t.slice(1)));
+    return null;
+  }
+  function encodeSheets(list) {
+    return 'DRUM1:' + b64e(JSON.stringify(list.map((m) => [m.name, sanitizeCombo(m.seq).map(figTok).join(' ')])));
+  }
+  function decodeSheets(code) {
+    const c = String(code).replace(/\s+/g, '');
+    if (!c.startsWith('DRUM1:')) throw new Error('这不是谱子代码（应该以 DRUM1: 开头）');
+    let arr;
+    try { arr = JSON.parse(b64d(c.slice(6))); } catch (e) { throw new Error('代码不完整或已损坏，请重新完整复制一遍'); }
+    if (!Array.isArray(arr) || !arr.length || arr.length > 100) throw new Error('代码里没有可以导入的谱');
+    const sheets = arr.map((it) => {
+      if (!Array.isArray(it) || typeof it[0] !== 'string' || typeof it[1] !== 'string') return null;
+      const seq = sanitizeCombo(it[1].split(/\s+/).map(tokFig).filter(Boolean));
+      return seq.length ? { name: it[0].trim().slice(0, 40) || '导入的谱', seq } : null;
+    }).filter(Boolean);
+    if (!sheets.length) throw new Error('代码里没有可以导入的谱');
+    return sheets;
+  }
+  function importSheets(list) {
+    let added = 0, skipped = 0;
+    list.forEach(({ name, seq }) => {
+      if (s.mine.some((m) => m.name === name && JSON.stringify(m.seq) === JSON.stringify(seq))) { skipped++; return; }
+      const nm = s.mine.some((m) => m.name === name) ? `${name}（导入）` : name;
+      s.mine.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: nm, seq: clone(seq) });
+      added++;
+    });
+    if (added) comboChanged();
+    return { added, skipped };
+  }
+  function openIoSheet(title, html) {
+    $('sheetTitle').textContent = title;
+    $('sheetList').innerHTML = `<div class="io-box">${html}</div>`;
+    sheet.hidden = false;
+  }
+  async function openExportSheet(list) {
+    if (!list.length) { openIoSheet('导出', '<div class="io-msg">还没有保存的谱，先在上面点“保存”存一份。</div>'); return; }
+    const code = encodeSheets(list);
+    let copied = false;
+    try { await navigator.clipboard.writeText(code); copied = true; } catch (e) { /* 剪贴板不可用时让用户手动复制 */ }
+    openIoSheet(`导出 ${list.length} 份谱`, `
+      <div class="io-msg">${copied ? '代码已复制到剪贴板。' : '没能自动复制，请点下面的框全选后手动复制。'}把它发到另一台设备（微信、备忘录都行），在那边点“导入”粘贴。</div>
+      <textarea id="ioText" readonly rows="5">${code}</textarea>
+      <button class="io-btn" id="ioCopy">再复制一次</button>`);
+    $('ioCopy').addEventListener('click', async () => {
+      $('ioText').select();
+      try { await navigator.clipboard.writeText(code); $('ioCopy').textContent = '已复制'; } catch (e) { document.execCommand('copy'); }
+    });
+  }
+  function openImportSheet() {
+    openIoSheet('导入谱子', `
+      <div class="io-msg">把收到的代码粘贴到下面（以 DRUM1: 开头）。导入只会添加，不会覆盖或删除你已有的谱。</div>
+      <textarea id="ioText" rows="5" placeholder="DRUM1:..."></textarea>
+      <button class="io-btn" id="ioGo">导入</button>
+      <div class="io-result" id="ioResult"></div>`);
+    $('ioGo').addEventListener('click', () => {
+      try {
+        const { added, skipped } = importSheets(decodeSheets($('ioText').value));
+        $('ioResult').className = 'io-result ok';
+        $('ioResult').textContent = `导入完成：新增 ${added} 份${skipped ? `，跳过 ${skipped} 份重复的` : ''}。`;
+      } catch (e) {
+        $('ioResult').className = 'io-result err';
+        $('ioResult').textContent = e.message;
+      }
+    });
+  }
+  $('mineExport').addEventListener('click', () => openExportSheet(s.mine));
+  $('mineImport').addEventListener('click', openImportSheet);
+
   $('cClick').addEventListener('change', (e) => { s.cclick = e.target.checked; save(); });
 
   // 点谱面上的某一拍：换成同样长度的其他图形（小节不会被打乱）
@@ -1558,14 +1694,20 @@
     const left = Number(svg.dataset.left);
     if (svg.dataset.combo) {
       const uw = Number(svg.dataset.uw), rh = Number(svg.dataset.rh), per = Number(svg.dataset.per);
+      let lastRow = -1;
       cursors.push({
         kind, el,
         move: (u) => {
-          if (u < 0) { el.setAttribute('opacity', '0'); return; }
-          const bar = Math.floor(u / BAR), off = u % BAR;
+          if (u < 0) { el.setAttribute('opacity', '0'); lastRow = -1; return; }
+          const bar = Math.floor(u / BAR), off = u % BAR, row = Math.floor(bar / per);
           el.setAttribute('x', left + (bar % per) * BAR * uw + off * uw);
-          el.setAttribute('y', Math.floor(bar / per) * rh + 16);
+          el.setAttribute('y', row * rh + 16);
           el.setAttribute('opacity', '0.3');
+          // 全屏谱放不下、需要滚动时，让当前行始终在可见范围里
+          if (kind === 'overlay' && row !== lastRow) {
+            lastRow = row;
+            if (el.scrollIntoView) el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+          }
         }
       });
     } else {
@@ -1591,6 +1733,7 @@
       const host = $('scoreSvgHost');
       host.innerHTML = comboSvg(layout, { perRow: comboPerRow(), editable: false });
       setCursor('overlay', host.firstElementChild);
+      fitScore();
       return;
     }
     const isPad = s.mode === 'pad';
@@ -1601,9 +1744,28 @@
     const host = $('scoreSvgHost');
     host.innerHTML = isPad ? padSvg(g) : scoreSvg(g);
     setCursor('overlay', host.firstElementChild);
+    fitScore();
+  }
+  // 横屏时让谱自动放大到刚好占满可用空间（小节太多放不下就改成上下滚动）
+  const landscapeMq = window.matchMedia('(orientation: landscape) and (max-height: 500px)');
+  function fitScore() {
+    const svg = $('scoreSvgHost').firstElementChild;
+    if (!svg) return;
+    svg.style.width = '100%';
+    svg.style.height = 'auto';
+    if (!landscapeMq.matches) return;
+    const body = document.querySelector('.score-body');
+    const legend = $('scoreLegend');
+    const vb = svg.viewBox.baseVal;
+    const availW = body.clientWidth - 8;
+    const availH = body.clientHeight - (legend ? legend.offsetHeight : 0) - 14;
+    const scale = Math.min(availW / vb.width, availH / vb.height);
+    if (availH > 0 && scale >= 0.6) svg.style.height = `${Math.floor(Math.min(availH, vb.height * 1.6))}px`;
   }
   ['openScore', 'openPadScore', 'openComboScore'].forEach((id) =>
-    $(id).addEventListener('click', () => { renderScore(); $('score').hidden = false; }));
+    $(id).addEventListener('click', () => { $('score').hidden = false; renderScore(); }));
+  ['resize', 'orientationchange'].forEach((ev) => window.addEventListener(ev, () => { if (!$('score').hidden) fitScore(); }));
+  if (landscapeMq.addEventListener) landscapeMq.addEventListener('change', () => { if (!$('score').hidden) fitScore(); });
   // 转屏（宽度跨过 640）时重排：横屏每行 2 小节，竖屏 1 小节
   const onWideChange = () => {
     if (s.mode !== 'combo') return;
