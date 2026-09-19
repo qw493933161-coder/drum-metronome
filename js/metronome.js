@@ -52,6 +52,8 @@
     combo: Array.isArray(saved.combo) ? saved.combo : null,
     ctab: ['long', 'six', 'trip'].includes(saved.ctab) ? saved.ctab : 'long',
     cclick: saved.cclick !== false,
+    rbars: [2, 4, 6, 8].includes(saved.rbars) ? saved.rbars : 4,
+    rdiff: ['basic', 'adv', 'trip'].includes(saved.rdiff) ? saved.rdiff : 'basic',
     groove: typeof saved.groove === 'string' ? saved.groove : 'rock-q',
     gclick: saved.gclick !== false,
     pad: typeof saved.pad === 'string' ? saved.pad : 'single8',
@@ -242,14 +244,7 @@
     }
   }
 
-  let gcols = [], glit = -1;
-  function lightGroove(step) {
-    if (glit >= 0 && gcols[glit]) gcols[glit].forEach((e) => e.classList.remove('cur'));
-    glit = step;
-    if (gcols[step]) gcols[step].forEach((e) => e.classList.add('cur'));
-    if (s.mode === 'combo') moveComboCursor(step);
-    else moveScoreCursor(step);
-  }
+  function lightGroove(step) { moveScoreCursor(step); }
 
   const tick = () => {
     if (s.mode === 'groove') scheduleGroove();
@@ -576,45 +571,10 @@
     $('gTitle').textContent = g.name;
     $('gDesc').textContent = g.desc;
     $('gClick').checked = s.gclick;
-    const total = g.beats * g.spb;
-    const labels = g.spb === 4 ? ['', 'e', '&', 'a'] : ['', 'trip', 'let'];
-    const host = $('gGrid');
-    host.innerHTML = '';
-    gcols = Array.from({ length: total }, () => []);
-    glit = -1;
-
-    const lane = (name) => {
-      const row = document.createElement('div');
-      row.className = 'lane';
-      const label = document.createElement('span');
-      label.className = 'lane-name';
-      label.textContent = name;
-      const cells = document.createElement('div');
-      cells.className = 'cells';
-      row.append(label, cells);
-      host.appendChild(row);
-      return cells;
-    };
-    const head = lane('');
-    for (let i = 0; i < total; i++) {
-      const k = i % g.spb;
-      const sp = document.createElement('span');
-      sp.className = 'cnt' + (k === 0 ? ' bs' : '');
-      sp.textContent = k === 0 ? String(i / g.spb + 1) : labels[k];
-      head.appendChild(sp);
-    }
-    LANES.forEach(([name, key]) => {
-      const cells = lane(name);
-      for (let i = 0; i < total; i++) {
-        const open = key === 'hh' && g.hho && g.hho.includes(i);
-        const on = g[key].includes(i) || open;
-        const c = document.createElement('div');
-        c.className = 'cell' + (i % g.spb === 0 ? ' bs' : '') + (on ? ` on-${key}` : '') + (open ? ' open' : '');
-        cells.appendChild(c);
-        gcols[i].push(c);
-      }
-    });
-    host.dataset.n = total;
+    $('gLegend').innerHTML = LEGEND_GROOVE;
+    const host = $('gScore');
+    host.innerHTML = scoreSvg(g);
+    setCursor('inline', host.firstElementChild);
   }
   function renderGrooveList() {
     const host = $('gList');
@@ -881,40 +841,10 @@
     $('pTitle').textContent = ex.name;
     $('pDesc').textContent = ex.desc;
     $('pClick').checked = s.pclick;
-    const total = ex.beats * ex.spb;
-    const labels = ex.spb === 4 ? ['', 'e', '&', 'a'] : ex.spb === 3 ? ['', 'trip', 'let'] : ['', '&'];
-    const host = $('pGrid');
-    host.innerHTML = '';
-    gcols = Array.from({ length: total }, () => []);
-    glit = -1;
-    const lane = (name) => {
-      const row = document.createElement('div');
-      row.className = 'lane';
-      const label = document.createElement('span');
-      label.className = 'lane-name';
-      label.textContent = name;
-      const cells = document.createElement('div');
-      cells.className = 'cells';
-      row.append(label, cells);
-      host.appendChild(row);
-      return cells;
-    };
-    const head = lane('');
-    for (let i = 0; i < total; i++) {
-      const k = i % ex.spb;
-      const sp = document.createElement('span');
-      sp.className = 'cnt' + (k === 0 ? ' bs' : '');
-      sp.textContent = k === 0 ? String(i / ex.spb + 1) : labels[k];
-      head.appendChild(sp);
-    }
-    const cells = lane('手序');
-    ex.hits.forEach((h, i) => {
-      const c = document.createElement('div');
-      c.className = 'cell stk' + (i % ex.spb === 0 ? ' bs' : '') + (h ? ` h-${h.h}` : '') + (h && h.a ? ' acc' : '');
-      c.textContent = h ? h.h : '';
-      cells.appendChild(c);
-      gcols[i].push(c);
-    });
+    $('pLegend').innerHTML = LEGEND_PAD;
+    const host = $('pScore');
+    host.innerHTML = padSvg(ex);
+    setCursor('inline', host.firstElementChild);
   }
   function renderPadList() {
     const host = $('pList');
@@ -964,16 +894,20 @@
   function layoutCombo(seq) {
     const bars = [];
     let cur = [], used = 0;
-    seq.forEach((f) => {
-      cur.push(f); used += figUnits(f);
+    seq.forEach((f, idx) => {
+      cur.push({ f, idx }); used += figUnits(f);
       if (used >= BAR) { bars.push(cur); cur = []; used = 0; }
     });
     if (cur.length) bars.push(cur);
-    const rows = bars.map((figs) => {
+    const rows = bars.map((items) => {
       let st = 0;
-      const events = [];
-      figs.forEach((f) => { events.push(...figEvents(f, st)); st += figUnits(f); });
-      return { events, used: st };
+      const events = [], slots = [];
+      items.forEach(({ f, idx }) => {
+        events.push(...figEvents(f, st));
+        slots.push({ idx, st, u: figUnits(f) });
+        st += figUnits(f);
+      });
+      return { events, slots, used: st };
     });
     return { rows, used };   // used = 最后一小节已占用的单位（0 表示刚好写满）
   }
@@ -1069,56 +1003,68 @@
     return out;
   }
 
-  // 选择板上的小图标：一个图形的记谱
-  function miniFig(f) {
-    const u = figUnits(f);
-    const uw = Math.min(5.4, 70 / u);
-    const left = 6, lineY = 50, W = Math.round(left * 2 + Math.max(u * uw, 26) + 10);
-    const body = drawEvents({ events: figEvents(f, 0), left, uw, lineY, beamY: 18, bracketY: 6 });
+  // 选择板上的小图标：一个图形（或一串图形）的记谱
+  function miniFig(figsOrOne) {
+    const list = Array.isArray(figsOrOne) ? figsOrOne : [figsOrOne];
+    let st = 0;
+    const events = [];
+    list.forEach((f) => { events.push(...figEvents(f, st)); st += figUnits(f); });
+    const uw = Math.min(5.4, 70 / st);
+    const left = 6, lineY = 50, W = Math.round(left * 2 + Math.max(st * uw, 26) + 10);
+    const body = drawEvents({ events, left, uw, lineY, beamY: 18, bracketY: 6 });
     return `<svg viewBox="0 0 ${W} 64" width="${Math.round(W * 0.8)}" height="51" aria-hidden="true"><line x1="2" y1="${lineY}" x2="${W - 2}" y2="${lineY}" stroke="currentColor" stroke-width="1" opacity=".35"/>${body}</svg>`;
   }
 
+  // 多小节谱面：perRow 个小节一行（竖屏 1、横屏全屏 2）；editable 时每个图形上盖一块可点区域
   const CUW = 6.4, CLEFT = 58, CRH = 112;
-  function comboSvg(layout) {
-    const rows = layout.rows.slice();
-    if (layout.used === 0) rows.push({ events: [], used: 0 });
-    const W = CLEFT + BAR * CUW + 18, H = rows.length * CRH + 6;
+  function comboSvg(layout, opts) {
+    const perRow = (opts && opts.perRow) || 1;
+    const editable = !opts || opts.editable !== false;
+    const bars = layout.rows.slice();
+    if (editable && layout.used === 0) bars.push({ events: [], slots: [], used: 0 });
+    if (!bars.length) bars.push({ events: [], slots: [], used: 0 });
+    const nRows = Math.ceil(bars.length / perRow);
+    const W = CLEFT + perRow * BAR * CUW + 18, H = nRows * CRH + 6;
     let s2 = '';
-    rows.forEach((row, r) => {
+    let hits = '';
+    for (let r = 0; r < nRows; r++) {
       const top = r * CRH, lineY = top + 68, beamY = lineY - 34;
-      const isLast = r === rows.length - 1;
-      if (isLast && row.used < BAR) {
-        s2 += `<rect x="${CLEFT + row.used * CUW}" y="${top + 16}" width="${(BAR - row.used) * CUW}" height="${CRH - 34}" rx="6" fill="currentColor" opacity=".06"/>`;
-      }
-      s2 += `<line x1="8" y1="${lineY}" x2="${W - 8}" y2="${lineY}" stroke="currentColor" stroke-width="1.2"/>`;
+      const rowBars = bars.slice(r * perRow, r * perRow + perRow);
+      const xEnd = CLEFT + rowBars.length * BAR * CUW + 6;
+      s2 += `<line x1="8" y1="${lineY}" x2="${xEnd}" y2="${lineY}" stroke="currentColor" stroke-width="1.2"/>`;
       s2 += `<rect x="14" y="${lineY - 9}" width="3.2" height="18" fill="currentColor"/><rect x="21" y="${lineY - 9}" width="3.2" height="18" fill="currentColor"/>`;
       if (r === 0) {
         s2 += `<text x="42" y="${lineY - 1.5}" text-anchor="middle" font-size="16" font-weight="700" font-family="serif" fill="currentColor">4</text>`;
         s2 += `<text x="42" y="${lineY + 15.5}" text-anchor="middle" font-size="16" font-weight="700" font-family="serif" fill="currentColor">4</text>`;
       }
-      s2 += `<line x1="${W - 13}" y1="${lineY - 9}" x2="${W - 13}" y2="${lineY + 9}" stroke="currentColor" stroke-width="1.2"/><rect x="${W - 10}" y="${lineY - 9}" width="3" height="18" fill="currentColor"/>`;
-      s2 += `<text x="10" y="${top + 22}" font-size="11" fill="currentColor" opacity=".55">${r + 1}</text>`;
-      for (let b = 1; b < 4; b++) {
-        const gx = CLEFT + b * 12 * CUW;
-        s2 += `<line x1="${gx}" y1="${top + 18}" x2="${gx}" y2="${top + CRH - 26}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 4" opacity=".22"/>`;
-      }
-      for (let b = 0; b < 4; b++) {
-        s2 += `<text x="${CLEFT + b * 12 * CUW + 6}" y="${lineY + 34}" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor" opacity=".7">${b + 1}</text>`;
-      }
-      s2 += `<g>${drawEvents({ events: row.events, left: CLEFT, uw: CUW, lineY, beamY, bracketY: beamY - 10 })}</g>`;
-    });
-    s2 += `<rect class="cur" x="0" y="0" width="${3 * CUW}" height="${CRH - 34}" rx="4" fill="#ff6b4a" opacity="0"/>`;
-    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${s2}</svg>`;
-  }
-
-  function moveComboCursor(unit) {
-    const c = $('cSvgHost').querySelector('.cur');
-    if (!c) return;
-    if (unit < 0) { c.setAttribute('opacity', '0'); return; }
-    const bar = Math.floor(unit / BAR), off = unit % BAR;
-    c.setAttribute('x', CLEFT + off * CUW);
-    c.setAttribute('y', bar * CRH + 16);
-    c.setAttribute('opacity', '0.3');
+      rowBars.forEach((bar, k) => {
+        const gb = r * perRow + k;
+        const left = CLEFT + k * BAR * CUW;
+        const xBar = left + BAR * CUW + 3;
+        const isFinal = gb === bars.length - 1;
+        if (editable && isFinal && bar.used < BAR) {
+          s2 += `<rect x="${left + bar.used * CUW}" y="${top + 16}" width="${(BAR - bar.used) * CUW}" height="${CRH - 34}" rx="6" fill="currentColor" opacity=".06"/>`;
+        }
+        s2 += `<line x1="${xBar}" y1="${lineY - 9}" x2="${xBar}" y2="${lineY + 9}" stroke="currentColor" stroke-width="1.2"/>`;
+        if (isFinal) s2 += `<rect x="${xBar + 3}" y="${lineY - 9}" width="3" height="18" fill="currentColor"/>`;
+        s2 += `<text x="${left + 2}" y="${top + 22}" font-size="11" fill="currentColor" opacity=".55">${gb + 1}</text>`;
+        for (let b = 1; b < 4; b++) {
+          const gx = left + b * 12 * CUW;
+          s2 += `<line x1="${gx}" y1="${top + 18}" x2="${gx}" y2="${top + CRH - 26}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 4" opacity=".22"/>`;
+        }
+        for (let b = 0; b < 4; b++) {
+          s2 += `<text x="${left + b * 12 * CUW + 6}" y="${lineY + 34}" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor" opacity=".7">${b + 1}</text>`;
+        }
+        s2 += `<g>${drawEvents({ events: bar.events, left, uw: CUW, lineY, beamY, bracketY: beamY - 10 })}</g>`;
+        if (editable) {
+          bar.slots.forEach((sl) => {
+            hits += `<rect class="hit" data-idx="${sl.idx}" x="${left + sl.st * CUW}" y="${lineY - 46}" width="${sl.u * CUW}" height="84" fill="rgba(0,0,0,0.001)" style="cursor:pointer"/>`;
+          });
+        }
+      });
+    }
+    s2 += `<rect class="cur" x="0" y="0" width="${3 * CUW}" height="${CRH - 34}" rx="4" fill="#ff6b4a" opacity="0" pointer-events="none"/>`;
+    return `<svg viewBox="0 0 ${W} ${H}" data-combo="1" data-left="${CLEFT}" data-uw="${CUW}" data-rh="${CRH}" data-per="${perRow}" style="width:100%;height:auto;display:block">${s2}${hits}</svg>`;
   }
 
   let comboCache = null;
@@ -1153,7 +1099,16 @@
     { name: '四分、八分、十六分递进 | 前八后十六 / 前十六后八交替', seq: [N(12), C('1010'), C('1111'), R(12), C('1011'), C('1110'), C('1011'), C('1110')] },
     { name: '附点节奏：附点四分+八分 | 附点二分+四分', seq: [N(18), N(6), N(18), N(6), N(36), N(12)] },
     { name: '三连音混合 | 摇摆八分', seq: [C('111'), C('111'), N(12), N(12), C('101'), C('101'), C('101'), C('101')] },
-    { name: '休止符组合', seq: [N(12), R(12), N(12), R(12), N(24), R(12), C('1011')] }
+    { name: '休止符组合', seq: [N(12), R(12), N(12), R(12), N(24), R(12), C('1011')] },
+    // 老师手绘谱（照片识读版）：看清的拍已录入，没看清的先空成四分休止，点谱面上的那一拍替换即可
+    { name: '老师练习谱（识读版，空拍待补）', seq: [
+      N(12), C('1111'), N(12), C('1011'),
+      C('1010'), C('1110'), C('1111'), C('1001'),
+      C('1101'), R(12), C('1111'), N(12),
+      R(12), R(12), C('1111'), N(12),
+      R(12), R(12), R(12), R(12),
+      R(12), R(12), R(12), R(12)
+    ] }
   ];
   s.combo = sanitizeCombo(s.combo && s.combo.length ? s.combo : COMBO_PRESETS[0].seq);
 
@@ -1164,20 +1119,28 @@
   }
   function renderCombo() {
     const layout = layoutCombo(s.combo);
-    $('cSvgHost').innerHTML = comboSvg(layout);
+    const host = $('cSvgHost');
+    host.innerHTML = comboSvg(layout, { perRow: 1, editable: true });
+    setCursor('inline', host.firstElementChild);
     const remaining = layout.used === 0 ? BAR : BAR - layout.used;
     $('cRemain').textContent = `当前小节还能放 ${remaining / 12} 拍`;
     $('cHint').textContent = s.combo.length ? '' : '先从下面选几个时值放进来';
     $('cClick').checked = s.cclick;
 
-    $('cTabs').innerHTML = '';
-    Object.keys(TAB_NAMES).forEach((k) => {
-      const b = document.createElement('button');
-      b.dataset.tab = k;
-      b.className = k === s.ctab ? 'on' : '';
-      b.textContent = TAB_NAMES[k];
-      $('cTabs').appendChild(b);
-    });
+    const segs = (el, items, current, attr) => {
+      el.innerHTML = '';
+      items.forEach(([k, label]) => {
+        const b = document.createElement('button');
+        b.dataset[attr] = k;
+        b.className = String(k) === String(current) ? 'on' : '';
+        b.textContent = label;
+        el.appendChild(b);
+      });
+    };
+    segs($('cTabs'), Object.keys(TAB_NAMES).map((k) => [k, TAB_NAMES[k]]), s.ctab, 'tab');
+    segs($('rBars'), [2, 4, 6, 8].map((n) => [n, `${n} 小节`]), s.rbars, 'n');
+    segs($('rDiff'), Object.keys(RAND_LEVELS).map((k) => [k, RAND_LEVELS[k]]), s.rdiff, 'lv');
+
     const pal = $('cPalette');
     pal.innerHTML = '';
     PALETTE[s.ctab].forEach((f, i) => {
@@ -1221,11 +1184,134 @@
   });
   $('cClick').addEventListener('change', (e) => { s.cclick = e.target.checked; save(); });
 
+  // 点谱面上的某一拍：换成同样长度的其他图形（小节不会被打乱）
+  const restsFor = (u) => {
+    const out = [];
+    let left = u;
+    REST_DURS.forEach((d) => { while (left >= d) { out.push(R(d)); left -= d; } });
+    return left === 0 ? out : [];
+  };
+  function replaceOptions(fig) {
+    const u = figUnits(fig);
+    const opts = [];
+    Object.values(PALETTE).forEach((list) => list.forEach((f) => {
+      if (figUnits(f) === u && JSON.stringify(f) !== JSON.stringify(fig)) opts.push([f]);
+    }));
+    if (!REST_DURS.includes(u)) { const rs = restsFor(u); if (rs.length) opts.push(rs); }
+    return opts;
+  }
+  function openReplaceSheet(idx) {
+    const fig = s.combo[idx];
+    if (!fig) return;
+    $('sheetTitle').textContent = `第 ${idx + 1} 个图形：换成（占 ${figUnits(fig) / 12} 拍）`;
+    const list = $('sheetList');
+    list.innerHTML = '';
+    replaceOptions(fig).forEach((figs) => {
+      const row = document.createElement('button');
+      row.className = 'sheet-row';
+      row.innerHTML = miniFig(figs);
+      row.addEventListener('click', () => {
+        s.combo.splice(idx, 1, ...JSON.parse(JSON.stringify(figs)));
+        closeSheet();
+        comboChanged();
+      });
+      list.appendChild(row);
+    });
+    sheet.hidden = false;
+  }
+  $('cSvgHost').addEventListener('click', (e) => {
+    const hit = e.target.closest('.hit');
+    if (hit) openReplaceSheet(Number(hit.dataset.idx));
+  });
+
+  // 随机出一页：每拍从一拍组合里抽一个，每小节最多一拍休止
+  const RAND_LEVELS = { basic: '基础', adv: '进阶', trip: '含三连音' };
+  function randPool(level) {
+    const w = (f, n) => ({ f, n });
+    const basic = [w(N(12), 3), w(C('1010'), 3), w(C('1111'), 2), w(C('1011'), 2), w(C('1110'), 2), w(R(12), 1)];
+    if (level === 'basic') return basic;
+    const adv = [w(N(12), 2), w(R(12), 1)].concat(PALETTE.six.map((f) => w(f, 1)));
+    if (level === 'adv') return adv;
+    return adv.concat(PALETTE.trip.map((f) => w(f, 1)));
+  }
+  function randomSheet(bars, level) {
+    const pool = randPool(level);
+    const total = pool.reduce((a, p) => a + p.n, 0);
+    const pick = () => {
+      let r = Math.random() * total;
+      for (const p of pool) { r -= p.n; if (r < 0) return p.f; }
+      return pool[0].f;
+    };
+    const out = [];
+    for (let b = 0; b < bars; b++) {
+      let bar;
+      do { bar = [pick(), pick(), pick(), pick()]; } while (bar.filter((f) => f.k === 'r').length > 1);
+      bar.forEach((f) => out.push(JSON.parse(JSON.stringify(f))));
+    }
+    return out;
+  }
+  $('rBars').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (b) { s.rbars = Number(b.dataset.n); save(); renderCombo(); }
+  });
+  $('rDiff').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (b) { s.rdiff = b.dataset.lv; save(); renderCombo(); }
+  });
+  $('rGo').addEventListener('click', () => {
+    s.combo = randomSheet(s.rbars, s.rdiff);
+    comboChanged();
+  });
+
   const LEGEND_GROOVE ='<span><b>×</b> 踩镲（线上方）</span><span><b>×</b>上带圈 开镲</span><span><b>●</b> 军鼓（第 3 间）</span><span><b>●</b> 底鼓（第 1 间，符干朝下）</span>';
   const LEGEND_PAD = '<span><b>R</b> 右手　<b>L</b> 左手</span><span><b>&gt;</b> 重音</span><span>单线谱：符头都打在鼓垫上</span>';
 
-  let scoreCursor = null, scoreGeom = null;
+  const LEGEND_COMBO = '<span>每行按屏幕宽度排 1 到 2 个小节</span><span>橙色竖条是当前播放位置</span>';
+
+  // 高亮竖条：页面里的谱和全屏谱各有一条，同时移动
+  let cursors = [];
+  function setCursor(kind, svg) {
+    cursors = cursors.filter((c) => c.kind !== kind);
+    const el = svg && svg.querySelector('.cur');
+    if (!el) return;
+    const left = Number(svg.dataset.left);
+    if (svg.dataset.combo) {
+      const uw = Number(svg.dataset.uw), rh = Number(svg.dataset.rh), per = Number(svg.dataset.per);
+      cursors.push({
+        kind, el,
+        move: (u) => {
+          if (u < 0) { el.setAttribute('opacity', '0'); return; }
+          const bar = Math.floor(u / BAR), off = u % BAR;
+          el.setAttribute('x', left + (bar % per) * BAR * uw + off * uw);
+          el.setAttribute('y', Math.floor(bar / per) * rh + 16);
+          el.setAttribute('opacity', '0.3');
+        }
+      });
+    } else {
+      const sw = Number(svg.dataset.sw);
+      cursors.push({
+        kind, el,
+        move: (step) => {
+          if (step < 0) { el.setAttribute('opacity', '0'); return; }
+          el.setAttribute('x', left + step * sw);
+          el.setAttribute('opacity', '0.28');
+        }
+      });
+    }
+  }
+  function moveScoreCursor(step) { cursors.forEach((c) => c.move(step)); }
+
   function renderScore() {
+    if (s.mode === 'combo') {
+      const layout = layoutCombo(s.combo);
+      $('scoreTitle').textContent = '变速练习';
+      $('scoreSub').textContent = `${layout.rows.length} 小节 · 4/4 拍`;
+      $('scoreLegend').innerHTML = LEGEND_COMBO;
+      const host = $('scoreSvgHost');
+      host.innerHTML = comboSvg(layout, { perRow: window.innerWidth >= 640 ? 2 : 1, editable: false });
+      setCursor('overlay', host.firstElementChild);
+      return;
+    }
     const isPad = s.mode === 'pad';
     const g = isPad ? (PADS.find((x) => x.id === s.pad) || PADS[0]) : (GROOVES.find((x) => x.id === s.groove) || GROOVES[0]);
     $('scoreTitle').textContent = g.name;
@@ -1233,18 +1319,11 @@
     $('scoreLegend').innerHTML = isPad ? LEGEND_PAD : LEGEND_GROOVE;
     const host = $('scoreSvgHost');
     host.innerHTML = isPad ? padSvg(g) : scoreSvg(g);
-    const svg = host.firstElementChild;
-    scoreCursor = svg.querySelector('.cur');
-    scoreGeom = { left: Number(svg.dataset.left), sw: Number(svg.dataset.sw) };
+    setCursor('overlay', host.firstElementChild);
   }
-  function moveScoreCursor(step) {
-    if (!scoreCursor) return;
-    if (step < 0) { scoreCursor.setAttribute('opacity', '0'); return; }
-    scoreCursor.setAttribute('x', scoreGeom.left + step * scoreGeom.sw);
-    scoreCursor.setAttribute('opacity', '0.28');
-  }
-  ['openScore', 'openPadScore'].forEach((id) =>
+  ['openScore', 'openPadScore', 'openComboScore'].forEach((id) =>
     $(id).addEventListener('click', () => { renderScore(); $('score').hidden = false; }));
+  window.addEventListener('resize', () => { if (!$('score').hidden && s.mode === 'combo') renderScore(); });
   $('scoreClose').addEventListener('click', () => { $('score').hidden = true; });
   $('scorePlay').addEventListener('click', () => (playing ? stop() : start()));
   document.querySelectorAll('[data-sbpm]').forEach((btn) =>

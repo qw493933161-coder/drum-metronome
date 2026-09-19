@@ -72,8 +72,9 @@
     <section class="groove-card">
       <div class="groove-title" id="gTitle"></div>
       <div class="groove-desc" id="gDesc"></div>
-      <button class="btn-score" id="openScore">查看曲谱</button>
-      <div class="grid" id="gGrid"></div>
+      <div class="inline-score" id="gScore"></div>
+      <div class="score-legend inline-legend" id="gLegend"></div>
+      <button class="btn-score" id="openScore">全屏放大</button>
       <label class="check g-click"><input type="checkbox" id="gClick"><span>节拍参考音</span></label>
     </section>
     <section class="g-list" id="gList"></section>
@@ -83,8 +84,9 @@
     <section class="groove-card">
       <div class="groove-title" id="pTitle"></div>
       <div class="groove-desc" id="pDesc"></div>
-      <button class="btn-score" id="openPadScore">查看曲谱</button>
-      <div class="grid" id="pGrid"></div>
+      <div class="inline-score" id="pScore"></div>
+      <div class="score-legend inline-legend" id="pLegend"></div>
+      <button class="btn-score" id="openPadScore">全屏放大</button>
       <label class="check g-click"><input type="checkbox" id="pClick"><span>节拍参考音</span></label>
     </section>
     <section class="g-list" id="pList"></section>
@@ -95,12 +97,19 @@
       <div class="combo-head">
         <div>
           <div class="groove-title">变速练习</div>
-          <div class="groove-desc">把不同时值拼成一串，自动按 4/4 分小节，打出来跟着练。</div>
+          <div class="groove-desc">把不同时值拼成一串，自动按 4/4 分小节。点谱面上的某一拍，可以换成别的。</div>
         </div>
       </div>
       <div class="combo-tools"><button id="cUndo">撤销</button><button id="cClear">清空</button></div>
       <div class="combo-score" id="cSvgHost"></div>
       <div class="c-hint" id="cHint"></div>
+      <button class="btn-score" id="openComboScore">全屏整页</button>
+      <div class="rand-box">
+        <div class="rand-title">随机出题</div>
+        <div class="rand-row"><span>小节数</span><div class="seg mini" id="rBars"></div></div>
+        <div class="rand-row"><span>难度</span><div class="seg mini" id="rDiff"></div></div>
+        <button class="btn-score" id="rGo">随机出一页</button>
+      </div>
       <label class="check g-click"><input type="checkbox" id="cClick"><span>节拍参考音</span></label>
     </section>
     <section class="pattern">
