@@ -50,8 +50,11 @@
     ticks: saved.ticks !== false,
     mode: ['groove', 'pad', 'combo'].includes(saved.mode) ? saved.mode : 'metro',
     combo: Array.isArray(saved.combo) ? saved.combo : null,
-    ctab: ['long', 'six', 'trip'].includes(saved.ctab) ? saved.ctab : 'long',
+    ctab: ['long', 'six', 'trip', 'sync'].includes(saved.ctab) ? saved.ctab : 'long',
     cclick: saved.cclick !== false,
+    mine: Array.isArray(saved.mine) ? saved.mine.filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string' && Array.isArray(m.seq)) : [],
+    curMine: typeof saved.curMine === 'string' ? saved.curMine : null,
+    hist: Array.isArray(saved.hist) ? saved.hist.filter((x) => typeof x === 'string').slice(-30) : [],
     rbars: [2, 4, 6, 8].includes(saved.rbars) ? saved.rbars : 4,
     rdiff: ['basic', 'adv', 'trip'].includes(saved.rdiff) ? saved.rdiff : 'basic',
     groove: typeof saved.groove === 'string' ? saved.groove : 'rock-q',
@@ -109,28 +112,62 @@
   // ---------- 基础节奏：底鼓 / 军鼓 / 踩镲（合成音色），一小节 beats×spb 步 ----------
   // hh 闭镲、hho 开镲、sn 军鼓、bd 底鼓：都是小节内的步序号（0 起）
   const GROOVES = [
-    { id: 'rock-q', level: '入门', name: '四分踩镲摇滚', beats: 4, spb: 4,
+    // ---- 摇滚 ----
+    { id: 'rock-q', cat: '摇滚', level: '入门', name: '四分踩镲摇滚', beats: 4, spb: 4,
       desc: '踩镲每拍一下，底鼓 1、3 拍，军鼓 2、4 拍。先把手脚分开打稳。',
       hh: [0, 4, 8, 12], sn: [4, 12], bd: [0, 8] },
-    { id: 'rock-8', level: '基础', name: '八分踩镲摇滚', beats: 4, spb: 4,
+    { id: 'rock-8', cat: '摇滚', level: '基础', name: '八分踩镲摇滚', beats: 4, spb: 4,
       desc: '最经典的摇滚节奏：踩镲每半拍一下，底鼓 1、3，军鼓 2、4。',
       hh: [0, 2, 4, 6, 8, 10, 12, 14], sn: [4, 12], bd: [0, 8] },
-    { id: 'pop', level: '基础', name: '流行摇滚', beats: 4, spb: 4,
-      desc: '在八分摇滚的基础上，第 2 拍的“&”多加一脚底鼓。',
-      hh: [0, 2, 4, 6, 8, 10, 12, 14], sn: [4, 12], bd: [0, 6, 8] },
-    { id: 'half', level: '基础', name: '半速节奏 Half-time', beats: 4, spb: 4,
+    { id: 'rock-open', cat: '摇滚', level: '基础', name: '八分摇滚 + 尾拍开镲', beats: 4, spb: 4,
+      desc: '八分摇滚，最后一拍的“&”换成开镲，常用来给下一小节“起势”。',
+      hh: [0, 2, 4, 6, 8, 10, 12], hho: [14], sn: [4, 12], bd: [0, 8] },
+    { id: 'rock-k1', cat: '摇滚', level: '基础', name: '摇滚变奏：底鼓 1、3、3&', beats: 4, spb: 4,
+      desc: '在八分摇滚的第 3 拍后面多一脚底鼓（3 &），手不变，只练脚。',
+      hh: [0, 2, 4, 6, 8, 10, 12, 14], sn: [4, 12], bd: [0, 8, 10] },
+    { id: 'rock-k2', cat: '摇滚', level: '基础', name: '摇滚变奏：底鼓 1、1&、3', beats: 4, spb: 4,
+      desc: '第 1 拍连踩两脚（1 和 1&），第 3 拍一脚；手仍是八分踩镲加 2、4 军鼓。',
+      hh: [0, 2, 4, 6, 8, 10, 12, 14], sn: [4, 12], bd: [0, 2, 8] },
+    { id: 'rock-k3', cat: '摇滚', level: '基础', name: '摇滚变奏：底鼓 1、3、4&', beats: 4, spb: 4,
+      desc: '小节末多一脚底鼓（4&），听起来有往前推的感觉。',
+      hh: [0, 2, 4, 6, 8, 10, 12, 14], sn: [4, 12], bd: [0, 8, 14] },
+    { id: 'half', cat: '摇滚', level: '基础', name: '半速节奏 Half-time', beats: 4, spb: 4,
       desc: '军鼓落在第 3 拍，听起来更慢更厚重，速度其实没变。',
       hh: [0, 2, 4, 6, 8, 10, 12, 14], sn: [8], bd: [0] },
-    { id: 'disco', level: '基础', name: '迪斯科 Disco', beats: 4, spb: 4,
-      desc: '底鼓每拍都踩，军鼓 2、4，闭镲在每拍上，开镲在每拍的“&”。',
-      hh: [0, 4, 8, 12], hho: [2, 6, 10, 14], sn: [4, 12], bd: [0, 4, 8, 12] },
-    { id: 'waltz', level: '基础', name: '华尔兹 3/4 拍', beats: 3, spb: 4,
-      desc: '每小节只有 3 拍：底鼓 1，军鼓 2、3，踩镲每拍一下。',
-      hh: [0, 4, 8], sn: [4, 8], bd: [0] },
-    { id: 'rock-16', level: '进阶', name: '十六分踩镲摇滚', beats: 4, spb: 4,
+    { id: 'rock-16', cat: '摇滚', level: '进阶', name: '十六分踩镲摇滚', beats: 4, spb: 4,
       desc: '踩镲每个十六分音符都打，右手要一直匀速，底鼓 1、3，军鼓 2、4。',
       hh: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], sn: [4, 12], bd: [0, 8] },
-    { id: 'shuffle', level: '进阶', name: '蓝调 Shuffle（三连音）', beats: 4, spb: 3,
+    { id: 'rock-16k', cat: '摇滚', level: '进阶', name: '十六分踩镲 + 加底鼓', beats: 4, spb: 4,
+      desc: '十六分踩镲摇滚上再加底鼓 1、3、3&，右手匀速，脚要独立。',
+      hh: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], sn: [4, 12], bd: [0, 8, 10] },
+
+    // ---- 流行 · 嘻哈 · 放克 ----
+    { id: 'pop', cat: '流行 · 嘻哈 · 放克', level: '基础', name: '流行摇滚', beats: 4, spb: 4,
+      desc: '在八分摇滚的基础上，第 2 拍的“&”多加一脚底鼓。',
+      hh: [0, 2, 4, 6, 8, 10, 12, 14], sn: [4, 12], bd: [0, 6, 8] },
+    { id: 'hiphop', cat: '流行 · 嘻哈 · 放克', level: '基础', name: '嘻哈 Boom-bap', beats: 4, spb: 4,
+      desc: '八分踩镲，底鼓 1、3&，军鼓 2、4。速度放慢（70 到 90 BPM）更有味道。',
+      hh: [0, 2, 4, 6, 8, 10, 12, 14], sn: [4, 12], bd: [0, 10] },
+    { id: 'funk', cat: '流行 · 嘻哈 · 放克', level: '进阶', name: '放克基础 Funk', beats: 4, spb: 4,
+      desc: '十六分踩镲，底鼓 1、3&，军鼓 2、4。踩镲要匀，脚和军鼓要准。',
+      hh: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15], sn: [4, 12], bd: [0, 10] },
+
+    // ---- 舞曲 · 雷鬼 ----
+    { id: 'disco', cat: '舞曲 · 雷鬼', level: '基础', name: '迪斯科 Disco', beats: 4, spb: 4,
+      desc: '底鼓每拍都踩，军鼓 2、4，闭镲在每拍上，开镲在每拍的“&”。',
+      hh: [0, 4, 8, 12], hho: [2, 6, 10, 14], sn: [4, 12], bd: [0, 4, 8, 12] },
+    { id: 'reggae', cat: '舞曲 · 雷鬼', level: '基础', name: '雷鬼 One Drop', beats: 4, spb: 4,
+      desc: '底鼓和军鼓一起落在第 3 拍，第 1 拍留空，踩镲八分音符。空着的第 1 拍要在心里数。',
+      hh: [0, 2, 4, 6, 8, 10, 12, 14], sn: [8], bd: [8] },
+
+    // ---- 拍号与摇摆 ----
+    { id: 'waltz', cat: '拍号与摇摆', level: '基础', name: '华尔兹 3/4 拍', beats: 3, spb: 4,
+      desc: '每小节只有 3 拍：底鼓 1，军鼓 2、3，踩镲每拍一下。',
+      hh: [0, 4, 8], sn: [4, 8], bd: [0] },
+    { id: 'waltz8', cat: '拍号与摇摆', level: '基础', name: '华尔兹（八分踩镲）', beats: 3, spb: 4,
+      desc: '3/4 拍加上八分踩镲：底鼓 1，军鼓 2、3，比四分踩镲更有动感。',
+      hh: [0, 2, 4, 6, 8, 10], sn: [4, 8], bd: [0] },
+    { id: 'shuffle', cat: '拍号与摇摆', level: '进阶', name: '蓝调 Shuffle（三连音）', beats: 4, spb: 3,
       desc: '每拍分成三份，踩镲打第 1、第 3 份，有“长短长短”的摇摆感；底鼓 1、3，军鼓 2、4。',
       hh: [0, 2, 3, 5, 6, 8, 9, 11], sn: [3, 9], bd: [0, 6] }
   ];
@@ -189,36 +226,101 @@
 
   // ---------- 鼓垫练习：单一军鼓/鼓垫音，手序 R/L，'>' 为重音，'.' 为休止 ----------
   const PADS = [
-    { id: 'single8', level: '入门', name: '单击（八分）', beats: 4, spb: 2,
+    // ---- 单击 ----
+    { id: 'single4', cat: '单击', level: '入门', name: '单击（四分）', beats: 4, spb: 4,
+      desc: '最慢的单击：左右手轮流各打一下，每拍一下。先练棍子的高度和声音，让左右一样。',
+      seq: 'R . . . L . . . R . . . L . . .' },
+    { id: 'single8', cat: '单击', level: '入门', name: '单击（八分）', beats: 4, spb: 2,
       desc: '左右手交替，每半拍一下。先让左右手的高度、力度、声音完全一样。',
       seq: 'R L R L R L R L' },
-    { id: 'single16', level: '入门', name: '单击（十六分）', beats: 4, spb: 4,
+    { id: 'single16', cat: '单击', level: '入门', name: '单击（十六分）', beats: 4, spb: 4,
       desc: '同样左右交替，速度翻倍。放松手腕，让棍子自己弹起来。',
       seq: 'R L R L R L R L R L R L R L R L' },
-    { id: 'single3', level: '基础', name: '单击（三连音）', beats: 4, spb: 3,
+    { id: 'lead-left', cat: '单击', level: '入门', name: '单击（左手起手）', beats: 4, spb: 4,
+      desc: '同样的十六分单击，但从左手开始。两只手都要能“带头”。',
+      seq: 'L R L R L R L R L R L R L R L R' },
+    { id: 'single3', cat: '单击', level: '基础', name: '单击（三连音）', beats: 4, spb: 3,
       desc: '每拍三下，左右手交替，所以每拍起手的手都在换（右左右 / 左右左）。',
       seq: 'R L R L R L R L R L R L' },
-    { id: 'double16', level: '基础', name: '双击（十六分）', beats: 4, spb: 4,
+    { id: 'single-rest1', cat: '单击', level: '基础', name: '单击（十六分，打一拍休一拍）', beats: 4, spb: 4,
+      desc: '打四下，休一拍，再打四下。休止的那一拍心里继续数，手不要动，下一拍准时进。',
+      seq: 'R L R L . . . . R L R L . . . .' },
+    { id: 'single-rest2', cat: '单击', level: '基础', name: '单击（十六分，打两拍休两拍）', beats: 4, spb: 4,
+      desc: '连续打两拍，再休两拍。休得越久越容易“抢拍”，用节拍参考音来校准。',
+      seq: 'R L R L R L R L . . . . . . . .' },
+
+    // ---- 双击 ----
+    { id: 'double8', cat: '双击', level: '基础', name: '双击（八分）', beats: 4, spb: 2,
+      desc: '每只手连打两下：右右左左。先慢，第二下靠棍子反弹，不要用力砸。',
+      seq: 'R R L L R R L L' },
+    { id: 'double16', cat: '双击', level: '基础', name: '双击（十六分）', beats: 4, spb: 4,
       desc: '每只手连打两下，第二下靠棍子的反弹，别用力砸。',
       seq: 'R R L L R R L L R R L L R R L L' },
-    { id: 'para', level: '基础', name: '单复合 Paradiddle', beats: 4, spb: 4,
+    { id: 'double-left', cat: '双击', level: '基础', name: '双击（左手起手）', beats: 4, spb: 4,
+      desc: '从左手开始的双击：左左右右。',
+      seq: 'L L R R L L R R L L R R L L R R' },
+
+    // ---- 复合 Paradiddle ----
+    { id: 'para8', cat: '复合 Paradiddle', level: '基础', name: '单复合（八分，慢速入门）', beats: 4, spb: 2,
+      desc: '右左右右 左右左左，每组第一下重音。先用八分音符把手序背熟。',
+      seq: 'R> L R R L> R L L' },
+    { id: 'para', cat: '复合 Paradiddle', level: '基础', name: '单复合 Paradiddle', beats: 4, spb: 4,
       desc: '右左右右 左右左左，每组第一下重音。所有复合类练习的基础。',
       seq: 'R> L R R L> R L L R> L R R L> R L L' },
-    { id: 'para-inv', level: '进阶', name: '反向复合 Inverted', beats: 4, spb: 4,
+    { id: 'para-left', cat: '复合 Paradiddle', level: '基础', name: '单复合（左手起手）', beats: 4, spb: 4,
+      desc: '左右左左 右左右右，从左手开始，重音在每组第一下。',
+      seq: 'L> R L L R> L R R L> R L L R> L R R' },
+    { id: 'para-inv', cat: '复合 Paradiddle', level: '进阶', name: '反向复合 Inverted', beats: 4, spb: 4,
       desc: '右左左右 左右右左：把单复合的双击挪到中间，换手的位置变了。',
       seq: 'R L L R L R R L R L L R L R R L' },
-    { id: 'para-2', level: '进阶', name: '双复合 Double Paradiddle', beats: 4, spb: 3,
+    { id: 'para-2', cat: '复合 Paradiddle', level: '进阶', name: '双复合 Double Paradiddle', beats: 4, spb: 3,
       desc: '右左右左右右 左右左右左左，三连音一组 6 下，每组第一下重音。',
       seq: 'R> L R L R R L> R L R L L' },
-    { id: 'para-3', level: '进阶', name: '三复合 Triple Paradiddle', beats: 4, spb: 4,
+    { id: 'para-3', cat: '复合 Paradiddle', level: '进阶', name: '三复合 Triple Paradiddle', beats: 4, spb: 4,
       desc: '每组 8 下：右左右左右左右右，接着左右左右左右左左。',
       seq: 'R> L R L R L R R L> R L R L R L L' },
-    { id: 'para-dd', level: '进阶', name: '复合双击 Paradiddle-diddle', beats: 4, spb: 3,
+    { id: 'para-dd', cat: '复合 Paradiddle', level: '进阶', name: '复合双击 Paradiddle-diddle', beats: 4, spb: 3,
       desc: '右左右右左左 左右左左右右，三连音每拍两下换手，第一下重音。',
       seq: 'R> L R R L L L> R L L R R' },
-    { id: 'roll5', level: '进阶', name: '五击滚奏 Five-stroke roll', beats: 4, spb: 4,
+
+    // ---- 滚奏 ----
+    { id: 'roll5', cat: '滚奏', level: '进阶', name: '五击滚奏 Five-stroke roll', beats: 4, spb: 4,
       desc: '右右左左 + 右（重音落在第 2 拍），下一组左右互换。前四下是双击，最后一下落稳。',
-      seq: 'R R L L R> . . . L L R R L> . . .' }
+      seq: 'R R L L R> . . . L L R R L> . . .' },
+    { id: 'triple3', cat: '滚奏', level: '进阶', name: '三击（三连音）', beats: 4, spb: 3,
+      desc: '每只手连续打三下，每拍换手。练手指的连续弹跳，三下要一样匀。',
+      seq: 'R R R L L L R R R L L L' },
+
+    // ---- 重音练习 ----
+    { id: 'acc1', cat: '重音练习', level: '基础', name: '十六分单击：重音在 1', beats: 4, spb: 4,
+      desc: '每拍第一下重音，其余轻。重音要高抬棍，轻音要低，高低差拉开。',
+      seq: 'R> L R L R> L R L R> L R L R> L R L' },
+    { id: 'acc-e', cat: '重音练习', level: '进阶', name: '十六分单击：重音在 e', beats: 4, spb: 4,
+      desc: '重音挪到每拍的第二下（e），全落在左手。重音位置一变，节奏感就变了。',
+      seq: 'R L> R L R L> R L R L> R L R L> R L' },
+    { id: 'acc-and', cat: '重音练习', level: '进阶', name: '十六分单击：重音在 &', beats: 4, spb: 4,
+      desc: '重音在每拍的第三下（&），全落在右手，听起来像反拍。',
+      seq: 'R L R> L R L R> L R L R> L R L R> L' },
+    { id: 'acc-a', cat: '重音练习', level: '进阶', name: '十六分单击：重音在 a', beats: 4, spb: 4,
+      desc: '重音在每拍的最后一下（a），全落在左手，紧贴下一拍，最容易抢拍。',
+      seq: 'R L R L> R L R L> R L R L> R L R L>' },
+    { id: 'acc-1and', cat: '重音练习', level: '进阶', name: '十六分单击：重音在 1 和 &', beats: 4, spb: 4,
+      desc: '每拍两个重音，全落在右手，左手都是轻音。',
+      seq: 'R> L R> L R> L R> L R> L R> L R> L R> L' },
+    { id: 'acc-ea', cat: '重音练习', level: '进阶', name: '十六分单击：重音在 e 和 a', beats: 4, spb: 4,
+      desc: '每拍两个重音，全落在左手，右手都是轻音。',
+      seq: 'R L> R L> R L> R L> R L> R L> R L> R L>' },
+    { id: 'acc-trip', cat: '重音练习', level: '进阶', name: '三连音单击：每拍第一下重音', beats: 4, spb: 3,
+      desc: '三连音单击，每拍第一下重音，重音的手每拍在换（右、左、右、左）。',
+      seq: 'R> L R L> R L R> L R L> R L' },
+
+    // ---- 综合 ----
+    { id: 'mix-sd', cat: '综合', level: '进阶', name: '单击 + 双击 交替', beats: 4, spb: 4,
+      desc: '第 1、3 拍打单击，第 2、4 拍打双击，两种手法交替切换，速度不能变。',
+      seq: 'R L R L R R L L R L R L R R L L' },
+    { id: 'mix-168', cat: '综合', level: '进阶', name: '十六分与八分交替', beats: 4, spb: 4,
+      desc: '第 1、3 拍十六分（4 下），第 2、4 拍八分（2 下），练速度切换时的稳定。',
+      seq: 'R L R L R . L . R L R L R . L .' }
   ];
   PADS.forEach((p) => {
     p.hits = p.seq.split(/\s+/).map((tok) => {
@@ -576,15 +678,49 @@
     host.innerHTML = scoreSvg(g);
     setCursor('inline', host.firstElementChild);
   }
-  function renderGrooveList() {
-    const host = $('gList');
+  // 分组列表：内容多了以后按类别折叠，当前选中项所在的类别自动展开
+  const openCats = { groove: new Set(), pad: new Set(), combo: new Set() };
+  function renderGrouped(host, key, items, activeIdx, makeItem) {
     host.innerHTML = '';
-    GROOVES.forEach((g) => {
+    const cats = [];
+    items.forEach((it, i) => {
+      let c = cats.find((x) => x.name === it.cat);
+      if (!c) { c = { name: it.cat, idxs: [] }; cats.push(c); }
+      c.idxs.push(i);
+    });
+    const open = openCats[key];
+    if (activeIdx >= 0) open.add(items[activeIdx].cat);
+    if (!open.size && cats.length) open.add(cats[0].name);
+    cats.forEach((c) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'g-group' + (open.has(c.name) ? ' open' : '');
+      const head = document.createElement('button');
+      head.className = 'g-cat';
+      head.dataset.cat = c.name;
+      head.innerHTML = `<span>${c.name}</span><small>${c.idxs.length}</small>`;
+      const body = document.createElement('div');
+      body.className = 'g-items';
+      c.idxs.forEach((i) => body.appendChild(makeItem(items[i], i)));
+      wrap.append(head, body);
+      host.appendChild(wrap);
+    });
+  }
+  [['gList', 'groove'], ['pList', 'pad'], ['cPresets', 'combo']].forEach(([id, key]) =>
+    $(id).addEventListener('click', (e) => {
+      const head = e.target.closest('.g-cat');
+      if (!head) return;
+      const set = openCats[key], name = head.dataset.cat;
+      if (set.has(name)) set.delete(name); else set.add(name);
+      head.parentElement.classList.toggle('open', set.has(name));
+    }));
+
+  function renderGrooveList() {
+    renderGrouped($('gList'), 'groove', GROOVES, GROOVES.findIndex((x) => x.id === s.groove), (g) => {
       const b = document.createElement('button');
       b.className = 'g-item' + (g.id === s.groove ? ' active' : '');
       b.dataset.id = g.id;
       b.innerHTML = `<span class="g-name">${g.name}</span><span class="g-level lv-${g.level}">${g.level}</span>`;
-      host.appendChild(b);
+      return b;
     });
   }
   function applyMode() {
@@ -847,14 +983,12 @@
     setCursor('inline', host.firstElementChild);
   }
   function renderPadList() {
-    const host = $('pList');
-    host.innerHTML = '';
-    PADS.forEach((p) => {
+    renderGrouped($('pList'), 'pad', PADS, PADS.findIndex((x) => x.id === s.pad), (p) => {
       const b = document.createElement('button');
       b.className = 'g-item' + (p.id === s.pad ? ' active' : '');
       b.dataset.id = p.id;
       b.innerHTML = `<span class="g-name">${p.name}</span><span class="g-level lv-${p.level}">${p.level}</span>`;
-      host.appendChild(b);
+      return b;
     });
   }
   $('pList').addEventListener('click', (e) => {
@@ -1009,7 +1143,7 @@
     let st = 0;
     const events = [];
     list.forEach((f) => { events.push(...figEvents(f, st)); st += figUnits(f); });
-    const uw = Math.min(5.4, 70 / st);
+    const uw = events.length > 1 ? Math.min(5.4, Math.max(70 / st, 3.4)) : Math.min(5.4, 70 / st);
     const left = 6, lineY = 50, W = Math.round(left * 2 + Math.max(st * uw, 26) + 10);
     const body = drawEvents({ events, left, uw, lineY, beamY: 18, bracketY: 6 });
     return `<svg viewBox="0 0 ${W} 64" width="${Math.round(W * 0.8)}" height="51" aria-hidden="true"><line x1="2" y1="${lineY}" x2="${W - 2}" y2="${lineY}" stroke="currentColor" stroke-width="1" opacity=".35"/>${body}</svg>`;
@@ -1091,26 +1225,91 @@
   const PALETTE = {
     long: [N(48), N(36), N(24), N(18), N(12), N(9), N(6), N(3), R(48), R(24), R(12), R(6), R(3)],
     six: catalog(4).map((i) => i.bits).filter((b) => b !== '0000' && b !== '1000').map(C),
-    trip: catalog(3).map((i) => i.bits).filter((b) => b !== '000' && b !== '100').map(C)
+    trip: catalog(3).map((i) => i.bits).filter((b) => b !== '000' && b !== '100').map(C),
+    // 切分：音从后半拍起、跨过拍线（一次放进去的是一串图形）
+    sync: [
+      [N(6), N(12), N(6)],                 // 八分 + 四分 + 八分
+      [R(6), N(12), N(6)],                 // 八分休止 + 四分 + 八分（后半拍起的四分）
+      [N(6), N(12), N(12), N(6)],          // 八分 + 四分 + 四分 + 八分（连续切分）
+      [N(6), N(24), N(6)],                 // 八分 + 二分 + 八分
+      [R(6), N(24), N(6)],                 // 八分休止 + 二分 + 八分
+      [N(9), N(9), N(6)],                  // 附点八分 + 附点八分 + 八分（3+3+2）
+      [N(18), N(18), N(12)]                // 附点四分 + 附点四分 + 四分（3+3+2 八分单位）
+    ]
   };
-  const TAB_NAMES = { long: '长音 · 休止', six: '十六分组合', trip: '三连音' };
+  const asList = (item) => (Array.isArray(item) ? item : [item]);
+  const listUnits = (list) => list.reduce((a, f) => a + figUnits(f), 0);
+  const TAB_NAMES = { long: '长音 · 休止', six: '十六分组合', trip: '三连音', sync: '切分' };
+  // 用简写写谱：w 全音符 dh 附点二分 h 二分 dq 附点四分 q 四分 de 附点八分 e 八分 s 十六分；
+  // 加 r 是休止（wr hr qr er sr）；cXXXX 是一拍十六分组合（1 打 0 不打），tXXX 是一拍三连音；| 只是分小节的标记
+  const TOK = { w: N(48), dh: N(36), h: N(24), dq: N(18), q: N(12), de: N(9), e: N(6), s: N(3), wr: R(48), hr: R(24), qr: R(12), er: R(6), sr: R(3) };
+  function P(str) {
+    return str.split(/\s+/).filter((t) => t && t !== '|').map((t) => {
+      if (/^c[01]{4}$/.test(t) || /^t[01]{3}$/.test(t)) return C(t.slice(1));
+      if (!TOK[t]) throw new Error('未知记号 ' + t);
+      return JSON.parse(JSON.stringify(TOK[t]));
+    });
+  }
+  const preset = (cat, level, name, str) => ({ cat, level, name, seq: P(str) });
+
   const COMBO_PRESETS = [
-    { name: '二分 + 四分 + 前八后十六 | 全音符', seq: [N(24), N(12), C('1011'), N(48)] },
-    { name: '四分、八分、十六分递进 | 前八后十六 / 前十六后八交替', seq: [N(12), C('1010'), C('1111'), R(12), C('1011'), C('1110'), C('1011'), C('1110')] },
-    { name: '附点节奏：附点四分+八分 | 附点二分+四分', seq: [N(18), N(6), N(18), N(6), N(36), N(12)] },
-    { name: '三连音混合 | 摇摆八分', seq: [C('111'), C('111'), N(12), N(12), C('101'), C('101'), C('101'), C('101')] },
-    { name: '休止符组合', seq: [N(12), R(12), N(12), R(12), N(24), R(12), C('1011')] },
+    // ---- 入门时值 ----
+    preset('入门时值', '入门', '二分 + 四分 + 前八后十六 | 全音符', 'h q c1011 | w'),
+    preset('入门时值', '入门', '基础一：四分音符与二分音符', 'q q q q | h q q | q q h | w'),
+    preset('入门时值', '入门', '基础二：八分音符', 'c1010 c1010 c1010 c1010 | q c1010 q c1010 | c1010 q c1010 q | h c1010 c1010'),
+    preset('入门时值', '入门', '基础三：十六分音符', 'c1111 c1111 c1111 c1111 | q c1111 q c1111 | c1111 c1010 c1111 c1010 | c1111 q c1010 q'),
+    preset('入门时值', '基础', '基础四：四分、八分、十六分混合', 'q c1010 c1111 q | c1111 q c1010 c1111 | c1010 c1010 c1111 q | q c1111 c1010 c1010'),
+
+    // ---- 一拍组合（十六分）----
+    preset('一拍组合', '基础', '四分、八分、十六分递进 | 前八后十六 / 前十六后八交替', 'q c1010 c1111 qr | c1011 c1110 c1011 c1110'),
+    preset('一拍组合', '基础', '组合一：前八后十六 / 前十六后八', 'c1011 c1011 c1011 c1011 | c1110 c1110 c1110 c1110 | c1011 c1110 c1011 c1110 | c1110 c1011 c1110 c1011'),
+    preset('一拍组合', '基础', '组合二：附点八分与十六分', 'c1001 c1001 c1001 c1001 | c1100 c1100 c1100 c1100 | c1001 c1100 c1001 c1100 | c1101 c1101 c1101 c1101'),
+    preset('一拍组合', '进阶', '组合三：后半拍与空拍', 'c0010 c0010 c0010 c0010 | c0100 c0100 c0100 c0100 | c0001 c0001 c0001 c0001 | c0011 c0110 c0101 c0111'),
+    preset('一拍组合', '进阶', '组合四：综合读谱', 'q c1111 q c1011 | c1010 c1110 c1111 c1001 | c1101 c1011 c1111 q | c1001 c1100 c1010 c1111'),
+
+    // ---- 附点 ----
+    preset('附点', '基础', '附点节奏：附点四分+八分 | 附点二分+四分', 'dq e dq e | dh q'),
+    preset('附点', '基础', '附点二：附点四分、二分混合', 'dq e dq e | dh q | dq e q q | h dq e'),
+    preset('附点', '进阶', '附点三：附点八分 + 十六分', 'de s de s de s de s | q de s q q'),
+
+    // ---- 切分 ----
+    preset('切分', '基础', '切分一：八分+四分+八分 | 后半拍起的四分、二分', 'e q e e q e | er q e h'),
+    preset('切分', '进阶', '切分二：十六分切分 | 连续切分', 'c1101 c1101 c1101 c1101 | e q q e q'),
+    preset('切分', '基础', '切分三：后半拍起', 'er q e er q e | er h e q | e q e e q e | q e q e q'),
+    preset('切分', '进阶', '切分四：十六分切分与八分切分', 'c1101 q c1101 q | c1011 c1101 c1011 c1101 | e q e c1101 c1101 | c0110 c0110 c0110 c0110'),
+    preset('切分', '基础', '跳拍练习：1 2 X 4（空第 3 拍）', 'q q qr q | q q qr q | c1010 c1010 qr q | c1111 c1111 qr q'),
+
+    // ---- 三连音 ----
+    preset('三连音', '基础', '三连音混合 | 摇摆八分', 't111 t111 q q | t101 t101 t101 t101'),
+    preset('三连音', '基础', '三连音入门', 't111 t111 t111 t111 | q t111 q t111 | t111 q t111 q | t111 t111 h'),
+    preset('三连音', '进阶', '摇摆八分读谱（Shuffle）', 't101 t101 t101 t101 | q t101 q t101 | t101 t101 t110 t011 | t111 t101 t111 t101'),
+    preset('三连音', '进阶', '三连音缺音', 't110 t011 t010 t001 | t110 t110 t011 t011 | t101 t010 t101 t001 | t111 t110 t011 t111'),
+
+    // ---- 休止 ----
+    preset('休止', '入门', '休止入门', 'q qr q qr | qr q qr q | q q hr | h qr q'),
+    preset('休止', '基础', '休止符组合', 'q qr q qr | h qr c1011'),
+    preset('休止', '基础', '休止二：空拍与半小节休止', 'qr q qr q | q qr q qr | hr h | c1111 qr c1010 qr'),
+    preset('休止', '进阶', '休止三：八分休止与后半拍', 'er e er e er e er e | e er e er e er e er | q er e er e q | er e q er e q'),
+
+    // ---- 老师谱 ----
     // 老师手绘谱（照片识读版）：看清的拍已录入，没看清的先空成四分休止，点谱面上的那一拍替换即可
-    { name: '老师练习谱（识读版，空拍待补）', seq: [
-      N(12), C('1111'), N(12), C('1011'),
-      C('1010'), C('1110'), C('1111'), C('1001'),
-      C('1101'), R(12), C('1111'), N(12),
-      R(12), R(12), C('1111'), N(12),
-      R(12), R(12), R(12), R(12),
-      R(12), R(12), R(12), R(12)
-    ] }
+    preset('老师谱', '基础', '老师练习谱（识读版，空拍待补）',
+      'q c1111 q c1011 | c1010 c1110 c1111 c1001 | c1101 qr c1111 q | qr qr c1111 q | qr qr qr qr | qr qr qr qr')
   ];
+  COMBO_PRESETS.forEach((p) => {
+    const units = p.seq.reduce((a, f) => a + (f.k === 'c' ? 12 : f.d), 0);
+    if (units % 48 !== 0) console.error('preset not whole bars', p.name, units);
+  });
   s.combo = sanitizeCombo(s.combo && s.combo.length ? s.combo : COMBO_PRESETS[0].seq);
+
+  // 横屏（宽度 ≥ 640）每行排 2 小节，竖屏 1 小节
+  const wideMq = window.matchMedia('(min-width: 640px)');
+  const comboPerRow = () => (wideMq.matches ? 2 : 1);
+  function renderComboScore(layout) {
+    const host = $('cSvgHost');
+    host.innerHTML = comboSvg(layout || layoutCombo(s.combo), { perRow: comboPerRow(), editable: true });
+    setCursor('inline', host.firstElementChild);
+  }
 
   function comboChanged() {
     comboCache = null;
@@ -1119,9 +1318,9 @@
   }
   function renderCombo() {
     const layout = layoutCombo(s.combo);
-    const host = $('cSvgHost');
-    host.innerHTML = comboSvg(layout, { perRow: 1, editable: true });
-    setCursor('inline', host.firstElementChild);
+    renderComboScore(layout);
+    renderMine();
+    renderStatus();
     const remaining = layout.used === 0 ? BAR : BAR - layout.used;
     $('cRemain').textContent = `当前小节还能放 ${remaining / 12} 拍`;
     $('cHint').textContent = s.combo.length ? '' : '先从下面选几个时值放进来';
@@ -1147,18 +1346,16 @@
       const b = document.createElement('button');
       b.className = 'chip';
       b.dataset.i = i;
-      b.disabled = figUnits(f) > remaining;
+      b.disabled = listUnits(asList(f)) > remaining;
       b.innerHTML = miniFig(f);
       pal.appendChild(b);
     });
-    const pl = $('cPresets');
-    pl.innerHTML = '';
-    COMBO_PRESETS.forEach((p, i) => {
+    renderGrouped($('cPresets'), 'combo', COMBO_PRESETS, -1, (p, i) => {
       const b = document.createElement('button');
       b.className = 'g-item';
       b.dataset.i = i;
-      b.innerHTML = `<span class="g-name">${p.name}</span>`;
-      pl.appendChild(b);
+      b.innerHTML = `<span class="g-name">${p.name}</span><span class="g-level lv-${p.level}">${p.level}</span>`;
+      return b;
     });
   }
   $('cTabs').addEventListener('click', (e) => {
@@ -1168,19 +1365,97 @@
     save();
     renderCombo();
   });
+  // 所有会改动谱子的操作都走 commit：先把改动前的样子存进历史，"撤销"就能一步步退回
+  const clone = (x) => JSON.parse(JSON.stringify(x));
+  function commit(nextSeq, opts) {
+    s.hist = (s.hist || []).concat([JSON.stringify({ seq: s.combo, cur: s.curMine })]).slice(-30);
+    s.combo = nextSeq;
+    if (opts && 'cur' in opts) s.curMine = opts.cur;
+    comboChanged();
+  }
+  let flashTimer = null;
+  function flash(msg) {
+    $('cStatus').textContent = msg;
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(renderStatus, 2600);
+  }
+  function renderStatus() {
+    const cur = s.mine.find((m) => m.id === s.curMine);
+    let text = '';
+    if (cur) text = JSON.stringify(cur.seq) === JSON.stringify(s.combo) ? `「${cur.name}」已保存` : `「${cur.name}」有修改，点“保存”更新`;
+    else if (s.combo.length) text = '这一页还没保存，点“保存”存下来';
+    $('cStatus').textContent = text;
+  }
+  function renderMine() {
+    const host = $('cMine');
+    host.innerHTML = '';
+    if (!s.mine.length) {
+      host.innerHTML = '<div class="mine-empty">还没有保存的谱</div>';
+      return;
+    }
+    s.mine.forEach((m) => {
+      const row = document.createElement('div');
+      row.className = 'g-item mine' + (m.id === s.curMine ? ' active' : '');
+      row.dataset.id = m.id;
+      const bars = layoutCombo(sanitizeCombo(m.seq)).rows.length;
+      row.innerHTML = `<span class="g-name">${m.name.replace(/[<>&]/g, '')}<small>${bars} 小节</small></span><button class="mine-del" data-del="${m.id}" aria-label="删除">✕</button>`;
+      host.appendChild(row);
+    });
+  }
+  function saveAs() {
+    if (!s.combo.length) { flash('先拼好内容再保存'); return; }
+    const def = `我的练习 ${s.mine.length + 1}`;
+    const name = window.prompt('给这一页谱起个名字', def);
+    if (name === null) return;
+    const m = { id: Date.now().toString(36), name: name.trim() || def, seq: clone(s.combo) };
+    s.mine.unshift(m);
+    s.curMine = m.id;
+    comboChanged();
+    flash(`已保存「${m.name}」`);
+  }
+
   $('cPalette').addEventListener('click', (e) => {
     const b = e.target.closest('.chip');
     if (!b || b.disabled) return;
-    s.combo.push(JSON.parse(JSON.stringify(PALETTE[s.ctab][Number(b.dataset.i)])));
+    commit(s.combo.concat(clone(asList(PALETTE[s.ctab][Number(b.dataset.i)]))));
+  });
+  $('cUndo').addEventListener('click', () => {
+    const last = (s.hist || []).pop();
+    if (!last) { flash('没有可以撤销的操作了'); return; }
+    const prev = JSON.parse(last);
+    s.combo = sanitizeCombo(prev.seq);
+    s.curMine = prev.cur;
     comboChanged();
   });
-  $('cUndo').addEventListener('click', () => { s.combo.pop(); comboChanged(); });
-  $('cClear').addEventListener('click', () => { s.combo = []; comboChanged(); });
+  $('cClear').addEventListener('click', () => { if (s.combo.length) commit([], { cur: null }); });
   $('cPresets').addEventListener('click', (e) => {
     const b = e.target.closest('.g-item');
-    if (!b) return;
-    s.combo = sanitizeCombo(COMBO_PRESETS[Number(b.dataset.i)].seq);
+    if (b) commit(sanitizeCombo(COMBO_PRESETS[Number(b.dataset.i)].seq), { cur: null });
+  });
+  $('cSave').addEventListener('click', () => {
+    const m = s.mine.find((x) => x.id === s.curMine);
+    if (!m) { saveAs(); return; }
+    if (!s.combo.length) { flash('内容是空的，没有保存'); return; }
+    m.seq = clone(s.combo);
     comboChanged();
+    flash(`已保存「${m.name}」`);
+  });
+  $('cSaveAs').addEventListener('click', saveAs);
+  $('cMine').addEventListener('click', (e) => {
+    const del = e.target.closest('.mine-del');
+    if (del) {
+      const m = s.mine.find((x) => x.id === del.dataset.del);
+      if (m && window.confirm(`删除「${m.name}」吗？`)) {
+        s.mine = s.mine.filter((x) => x.id !== m.id);
+        if (s.curMine === m.id) s.curMine = null;
+        comboChanged();
+      }
+      return;
+    }
+    const row = e.target.closest('.mine');
+    if (!row) return;
+    const m = s.mine.find((x) => x.id === row.dataset.id);
+    if (m) commit(sanitizeCombo(m.seq), { cur: m.id });
   });
   $('cClick').addEventListener('change', (e) => { s.cclick = e.target.checked; save(); });
 
@@ -1194,8 +1469,9 @@
   function replaceOptions(fig) {
     const u = figUnits(fig);
     const opts = [];
-    Object.values(PALETTE).forEach((list) => list.forEach((f) => {
-      if (figUnits(f) === u && JSON.stringify(f) !== JSON.stringify(fig)) opts.push([f]);
+    Object.values(PALETTE).forEach((list) => list.forEach((item) => {
+      const figs = asList(item);
+      if (listUnits(figs) === u && JSON.stringify(figs) !== JSON.stringify([fig])) opts.push(figs);
     }));
     if (!REST_DURS.includes(u)) { const rs = restsFor(u); if (rs.length) opts.push(rs); }
     return opts;
@@ -1211,9 +1487,10 @@
       row.className = 'sheet-row';
       row.innerHTML = miniFig(figs);
       row.addEventListener('click', () => {
-        s.combo.splice(idx, 1, ...JSON.parse(JSON.stringify(figs)));
+        const next = JSON.parse(JSON.stringify(s.combo));
+        next.splice(idx, 1, ...JSON.parse(JSON.stringify(figs)));
         closeSheet();
-        comboChanged();
+        commit(next);
       });
       list.appendChild(row);
     });
@@ -1258,10 +1535,7 @@
     const b = e.target.closest('button');
     if (b) { s.rdiff = b.dataset.lv; save(); renderCombo(); }
   });
-  $('rGo').addEventListener('click', () => {
-    s.combo = randomSheet(s.rbars, s.rdiff);
-    comboChanged();
-  });
+  $('rGo').addEventListener('click', () => commit(randomSheet(s.rbars, s.rdiff), { cur: null }));
 
   const LEGEND_GROOVE ='<span><b>×</b> 踩镲（线上方）</span><span><b>×</b>上带圈 开镲</span><span><b>●</b> 军鼓（第 3 间）</span><span><b>●</b> 底鼓（第 1 间，符干朝下）</span>';
   const LEGEND_PAD = '<span><b>R</b> 右手　<b>L</b> 左手</span><span><b>&gt;</b> 重音</span><span>单线谱：符头都打在鼓垫上</span>';
@@ -1308,7 +1582,7 @@
       $('scoreSub').textContent = `${layout.rows.length} 小节 · 4/4 拍`;
       $('scoreLegend').innerHTML = LEGEND_COMBO;
       const host = $('scoreSvgHost');
-      host.innerHTML = comboSvg(layout, { perRow: window.innerWidth >= 640 ? 2 : 1, editable: false });
+      host.innerHTML = comboSvg(layout, { perRow: comboPerRow(), editable: false });
       setCursor('overlay', host.firstElementChild);
       return;
     }
@@ -1323,7 +1597,16 @@
   }
   ['openScore', 'openPadScore', 'openComboScore'].forEach((id) =>
     $(id).addEventListener('click', () => { renderScore(); $('score').hidden = false; }));
-  window.addEventListener('resize', () => { if (!$('score').hidden && s.mode === 'combo') renderScore(); });
+  // 转屏（宽度跨过 640）时重排：横屏每行 2 小节，竖屏 1 小节
+  const onWideChange = () => {
+    if (s.mode !== 'combo') return;
+    renderComboScore();
+    if (!$('score').hidden) renderScore();
+  };
+  if (wideMq.addEventListener) wideMq.addEventListener('change', onWideChange);
+  else wideMq.addListener(onWideChange);
+  window.addEventListener('resize', onWideChange);
+  window.addEventListener('orientationchange', onWideChange);
   $('scoreClose').addEventListener('click', () => { $('score').hidden = true; });
   $('scorePlay').addEventListener('click', () => (playing ? stop() : start()));
   document.querySelectorAll('[data-sbpm]').forEach((btn) =>
