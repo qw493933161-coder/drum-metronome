@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<title>鼓手节拍器</title>
+<meta name="description" content="离线可用的架子鼓节拍器：动态节奏变化、练习计划、自定义鼓谱型、谱面参考与配乐练习">
+<meta name="theme-color" content="#12131c">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+
+<div id="unlock-overlay" class="unlock-overlay">
+  <div class="unlock-card">
+    <div class="unlock-title">鼓手节拍器</div>
+    <div class="unlock-sub">浏览器要求先手动点一下才能播放精确音频</div>
+    <button id="unlock-btn" class="btn-primary unlock-btn">点击开始</button>
+  </div>
+</div>
+
+<header class="app-header">
+  <span class="app-title" id="header-title">节拍器</span>
+</header>
+
+<main id="app-main">
+  <section id="view-metronome" class="view"></section>
+  <section id="view-plans" class="view"></section>
+  <section id="view-patterns" class="view"></section>
+  <section id="view-materials" class="view"></section>
+</main>
+
+<div id="overlay-root"></div>
+<div id="toast-root" class="toast-root"></div>
+
+<nav class="tabbar" id="tabbar">
+  <button class="tab-btn" data-view="metronome">节拍器</button>
+  <button class="tab-btn" data-view="plans">练习计划</button>
+  <button class="tab-btn" data-view="patterns">鼓谱编辑</button>
+  <button class="tab-btn" data-view="materials">谱面/配乐</button>
+</nav>
+
+<script src="js/rhythmMath.js"></script>
+<script src="js/db.js"></script>
+<script src="js/storage.js"></script>
+<script src="js/audio.js"></script>
+<script src="js/engine.js"></script>
+<script src="js/wakelock.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/views/metronome.js"></script>
+<script src="js/views/plans.js"></script>
+<script src="js/views/patterns.js"></script>
+<script src="js/views/materials.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
