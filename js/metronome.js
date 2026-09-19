@@ -50,7 +50,7 @@
     ticks: saved.ticks !== false,
     mode: ['groove', 'pad', 'combo'].includes(saved.mode) ? saved.mode : 'metro',
     combo: Array.isArray(saved.combo) ? saved.combo : null,
-    ctab: ['long', 'six', 'trip', 'sync'].includes(saved.ctab) ? saved.ctab : 'long',
+    ctab: ['long', 'six', 'trip', 'sync'].includes(saved.ctab) ? saved.ctab : 'six',
     cclick: saved.cclick !== false,
     dtext: typeof saved.dtext === 'string' ? saved.dtext.slice(0, 2000) : '',
     avOffset: Number.isFinite(saved.avOffset) ? Math.max(-80, Math.min(500, Math.round(saved.avOffset))) : 0,
@@ -1230,8 +1230,9 @@
 
   const PALETTE = {
     long: [N(48), N(36), N(24), N(18), N(12), N(9), N(6), N(3), R(48), R(24), R(12), R(6), R(3)],
-    six: catalog(4).map((i) => i.bits).filter((b) => b !== '0000' && b !== '1000').map(C),
-    trip: catalog(3).map((i) => i.bits).filter((b) => b !== '000' && b !== '100').map(C),
+    // 与节拍器页“节奏型”的图标、顺序完全一致（含只打正拍、整拍休止）
+    six: catalog(4).map((i) => C(i.bits)),
+    trip: catalog(3).map((i) => C(i.bits)),
     // 切分：音从后半拍起、跨过拍线（一次放进去的是一串图形）
     sync: [
       C('1101'),                           // 十六分 + 八分 + 十六分（十六分切分）
@@ -1245,6 +1246,8 @@
     ]
   };
   const asList = (item) => (Array.isArray(item) ? item : [item]);
+  // 一拍里只有“打正拍”或“全休止”的组合：等同于四分音符 / 四分休止
+  const isPlainBeat = (figs) => figs.length === 1 && figs[0].k === 'c' && /^(1000|0000|100|000)$/.test(figs[0].b);
   const listUnits = (list) => list.reduce((a, f) => a + figUnits(f), 0);
   const TAB_NAMES = { long: '长音 · 休止', six: '十六分组合', trip: '三连音', sync: '切分' };
   // 用简写写谱：w 全音符 dh 附点二分 h 二分 dq 附点四分 q 四分 de 附点八分 e 八分 s 十六分；
@@ -1614,7 +1617,9 @@
     const opts = [];
     Object.values(PALETTE).forEach((list) => list.forEach((item) => {
       const figs = asList(item);
-      if (listUnits(figs) === u && JSON.stringify(figs) !== JSON.stringify([fig])) opts.push(figs);
+      if (isPlainBeat(figs)) return;     // 整拍四分音符 / 整拍休止已在“长音·休止”里，不重复列出
+      const key = JSON.stringify(figs);
+      if (listUnits(figs) === u && key !== JSON.stringify([fig]) && !opts.some((o) => JSON.stringify(o) === key)) opts.push(figs);
     }));
     if (!REST_DURS.includes(u)) { const rs = restsFor(u); if (rs.length) opts.push(rs); }
     return opts;
@@ -1650,9 +1655,11 @@
     const w = (f, n) => ({ f, n });
     const basic = [w(N(12), 3), w(C('1010'), 3), w(C('1111'), 2), w(C('1011'), 2), w(C('1110'), 2), w(R(12), 1)];
     if (level === 'basic') return basic;
-    const adv = [w(N(12), 2), w(R(12), 1)].concat(PALETTE.six.map((f) => w(f, 1)));
+    // 随机出题不用整拍休止的组合写法，保证“每小节最多一拍休止”的规则成立
+    const real = (list) => list.filter((f) => !isPlainBeat([f]));
+    const adv = [w(N(12), 2), w(R(12), 1)].concat(real(PALETTE.six).map((f) => w(f, 1)));
     if (level === 'adv') return adv;
-    return adv.concat(PALETTE.trip.map((f) => w(f, 1)));
+    return adv.concat(real(PALETTE.trip).map((f) => w(f, 1)));
   }
   function randomSheet(bars, level) {
     const pool = randPool(level);
