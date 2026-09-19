@@ -89,6 +89,67 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 .sheet-row svg { display: block; }
 .sheet-row.active { background: var(--surface-2); color: var(--accent-2); }
 
+[hidden] { display: none !important; }
+.view { display: flex; flex-direction: column; gap: 20px; }
+
+.seg { display: flex; background: var(--surface); border-radius: 14px; padding: 4px; }
+.seg button { flex: 1; height: 40px; border-radius: 10px; background: none; color: var(--dim); font-size: 15px; }
+.seg button.on { background: var(--surface-2); color: var(--text); font-weight: 600; }
+
+.groove-card { background: var(--surface); border-radius: 16px; padding: 16px 14px 14px; }
+.groove-title { font-size: 17px; font-weight: 600; }
+.groove-desc { font-size: 13px; color: var(--dim); line-height: 1.5; margin: 6px 0 14px; }
+.lane { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.lane-name { width: 34px; font-size: 11px; color: var(--dim); flex-shrink: 0; }
+.cells { display: flex; gap: 2px; flex: 1; min-width: 0; }
+.cell { flex: 1; min-width: 0; height: 28px; border-radius: 5px; background: var(--surface-2); }
+.bs:not(:first-child) { margin-left: 4px; }
+.cell.on-hh { background: var(--blue); }
+.cell.on-hh.open { background: transparent; box-shadow: inset 0 0 0 2.5px var(--blue); }
+.cell.on-sn { background: #ffb84a; }
+.cell.on-bd { background: var(--accent); }
+.cell.cur { outline: 2px solid #fff; outline-offset: -2px; }
+.cnt { flex: 1; min-width: 0; text-align: center; font-size: 10px; color: var(--dim); overflow: hidden; }
+.cnt.bs { color: var(--text); font-weight: 600; font-size: 12px; }
+.g-click { margin-top: 12px; }
+
+.g-list { display: flex; flex-direction: column; gap: 8px; }
+.g-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%;
+  background: var(--surface); border-radius: 14px; padding: 14px 16px; font-size: 15px; text-align: left;
+}
+.g-item.active { background: var(--surface-2); box-shadow: inset 0 0 0 2px var(--accent); }
+.g-level { font-size: 11px; padding: 3px 9px; border-radius: 100px; background: var(--surface-2); color: var(--dim); flex-shrink: 0; }
+.g-item.active .g-level { background: var(--bg); }
+.g-level.lv-入门 { color: #6bd68a; }
+.g-level.lv-基础 { color: #7c8cff; }
+.g-level.lv-进阶 { color: #ffb84a; }
+
+.btn-score { width: 100%; height: 44px; border-radius: 12px; background: var(--surface-2); color: var(--accent-2); font-size: 15px; font-weight: 600; margin-bottom: 14px; }
+
+.score { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: flex; flex-direction: column; }
+.score-head { display: flex; align-items: center; gap: 12px; padding: max(12px, env(safe-area-inset-top)) 16px 10px; }
+.score-close { width: 40px; height: 40px; border-radius: 12px; background: var(--surface-2); font-size: 18px; flex-shrink: 0; }
+.score-title { font-size: 17px; font-weight: 600; }
+.score-sub { font-size: 12px; color: var(--dim); margin-top: 2px; }
+.score-body { flex: 1; overflow: auto; padding: 8px 12px; display: flex; flex-direction: column; justify-content: center; gap: 14px; }
+.score-body svg { background: #f4f1ea; color: #1c1d26; border-radius: 12px; padding: 8px 4px; }
+.score-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--dim); justify-content: center; }
+.score-legend b { color: var(--text); }
+.score-tip { text-align: center; font-size: 11px; color: var(--dim); opacity: .7; }
+.score-bar { padding: 10px 16px calc(12px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; background: var(--surface); }
+.score-bpm { display: flex; align-items: center; justify-content: center; gap: 8px; }
+.score-bpm button { width: 52px; height: 42px; border-radius: 12px; background: var(--surface-2); font-size: 16px; }
+.score-bpm span { min-width: 110px; text-align: center; font-size: 14px; color: var(--dim); }
+.score-bpm b { font-size: 26px; color: var(--text); font-variant-numeric: tabular-nums; }
+.score .play { max-width: none; height: 56px; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .score { flex-direction: row; flex-wrap: wrap; }
+  .score-head { width: 100%; padding-bottom: 4px; }
+  .score-body { width: calc(100% - 300px); }
+  .score-bar { width: 300px; justify-content: center; }
+}
+
 .play-bar {
   position: fixed; left: 0; right: 0; bottom: 0;
   padding: 12px 20px calc(12px + env(safe-area-inset-bottom));

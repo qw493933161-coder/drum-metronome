@@ -12,6 +12,11 @@
 </head>
 <body>
 <main class="app">
+  <div class="seg" id="seg">
+    <button data-mode="metro">节拍器</button>
+    <button data-mode="groove">基础节奏</button>
+  </div>
+
   <section class="bpm">
     <div class="bpm-num" id="bpm">100</div>
     <div class="bpm-unit">BPM</div>
@@ -25,6 +30,7 @@
     </div>
   </section>
 
+  <div class="view" id="viewMetro">
   <section class="settings">
     <div class="stepper">
       <div class="stepper-label">每小节拍数</div>
@@ -58,12 +64,52 @@
     </div>
     <div class="chips" id="chips"></div>
   </section>
+  </div>
+
+  <div class="view" id="viewGroove" hidden>
+    <section class="groove-card">
+      <div class="groove-title" id="gTitle"></div>
+      <div class="groove-desc" id="gDesc"></div>
+      <button class="btn-score" id="openScore">查看曲谱</button>
+      <div class="grid" id="gGrid"></div>
+      <label class="check g-click"><input type="checkbox" id="gClick"><span>节拍参考音</span></label>
+    </section>
+    <section class="g-list" id="gList"></section>
+  </div>
 </main>
 
 <div class="sheet" id="sheet" hidden>
   <div class="sheet-panel">
     <div class="sheet-title" id="sheetTitle"></div>
     <div id="sheetList"></div>
+  </div>
+</div>
+
+<div class="score" id="score" hidden>
+  <div class="score-head">
+    <button class="score-close" id="scoreClose" aria-label="关闭曲谱">✕</button>
+    <div>
+      <div class="score-title" id="scoreTitle"></div>
+      <div class="score-sub" id="scoreSub"></div>
+    </div>
+  </div>
+  <div class="score-body">
+    <div id="scoreSvgHost"></div>
+    <div class="score-legend">
+      <span><b>×</b> 踩镲（线上方）</span>
+      <span><b>×</b>上带圈 开镲</span>
+      <span><b>●</b> 军鼓（第 3 间）</span>
+      <span><b>●</b> 底鼓（第 1 间，符干朝下）</span>
+    </div>
+    <div class="score-tip">横屏时谱面更大更清楚</div>
+  </div>
+  <div class="score-bar">
+    <div class="score-bpm">
+      <button data-sbpm="-5">-5</button><button data-sbpm="-1">-1</button>
+      <span><b id="scoreBpm">100</b> BPM</span>
+      <button data-sbpm="1">+1</button><button data-sbpm="5">+5</button>
+    </div>
+    <button class="play" id="scorePlay">▶ 开始</button>
   </div>
 </div>
 
