@@ -125,6 +125,15 @@
     <div class="pattern-title c-presets-title">预置组合（点一下载入，可用“撤销”退回）</div>
     <section class="g-list" id="cPresets"></section>
   </div>
+
+  <details class="sync-box" id="syncBox">
+    <summary>声画同步校准</summary>
+    <div class="sync-body">
+      <div class="sync-row"><span>高亮延迟</span><b id="avVal">0 ms</b></div>
+      <input type="range" id="avSlider" min="-80" max="500" step="10" value="0" aria-label="高亮延迟">
+      <div class="sync-tip" id="avTip"></div>
+    </div>
+  </details>
 </main>
 
 <div class="sheet" id="sheet" hidden>

@@ -52,6 +52,7 @@
     combo: Array.isArray(saved.combo) ? saved.combo : null,
     ctab: ['long', 'six', 'trip', 'sync'].includes(saved.ctab) ? saved.ctab : 'long',
     cclick: saved.cclick !== false,
+    avOffset: Number.isFinite(saved.avOffset) ? Math.max(-80, Math.min(500, Math.round(saved.avOffset))) : 0,
     mine: Array.isArray(saved.mine) ? saved.mine.filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string' && Array.isArray(m.seq)) : [],
     curMine: typeof saved.curMine === 'string' ? saved.curMine : null,
     hist: Array.isArray(saved.hist) ? saved.hist.filter((x) => typeof x === 'string').slice(-30) : [],
@@ -356,8 +357,12 @@
   };
 
   // UI follows the audio clock via setInterval (rAF can stall when a tab isn't painting)
+  // 声音从"安排的时间"到耳朵还要经过设备输出延迟（手机几十毫秒，蓝牙耳机上百毫秒），
+  // 高亮按"听到的时间"走：自动扣除设备报告的延迟，再加上用户手动校准的偏移
+  function autoLatency() { return ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0; }
+  function visualLag() { return autoLatency() + s.avOffset / 1000; }
   function drain() {
-    const now = ctx.currentTime;
+    const now = ctx.currentTime - visualLag();
     let due = null;
     while (queue.length && queue[0].t <= now) due = queue.shift();
     if (!due) return;
@@ -1228,6 +1233,7 @@
     trip: catalog(3).map((i) => i.bits).filter((b) => b !== '000' && b !== '100').map(C),
     // 切分：音从后半拍起、跨过拍线（一次放进去的是一串图形）
     sync: [
+      C('1101'),                           // 十六分 + 八分 + 十六分（十六分切分）
       [N(6), N(12), N(6)],                 // 八分 + 四分 + 八分
       [R(6), N(12), N(6)],                 // 八分休止 + 四分 + 八分（后半拍起的四分）
       [N(6), N(12), N(12), N(6)],          // 八分 + 四分 + 四分 + 八分（连续切分）
@@ -1273,6 +1279,7 @@
     preset('附点', '进阶', '附点三：附点八分 + 十六分', 'de s de s de s de s | q de s q q'),
 
     // ---- 切分 ----
+    preset('切分', '入门', '切分入门：十六分 + 八分 + 十六分', 'c1101 c1101 c1101 c1101 | q c1101 q c1101 | c1101 q c1101 q | c1101 c1101 h'),
     preset('切分', '基础', '切分一：八分+四分+八分 | 后半拍起的四分、二分', 'e q e e q e | er q e h'),
     preset('切分', '进阶', '切分二：十六分切分 | 连续切分', 'c1101 c1101 c1101 c1101 | e q q e q'),
     preset('切分', '基础', '切分三：后半拍起', 'er q e er q e | er h e q | e q e e q e | q e q e q'),
@@ -1612,9 +1619,21 @@
   document.querySelectorAll('[data-sbpm]').forEach((btn) =>
     btn.addEventListener('click', () => setBpm(s.bpm + Number(btn.dataset.sbpm))));
 
+  // 声画同步校准：高亮比声音早就把数值调大，蓝牙耳机通常要 150 到 250 毫秒
+  function renderAv() {
+    $('avSlider').value = s.avOffset;
+    $('avVal').textContent = `${s.avOffset > 0 ? '+' : ''}${s.avOffset} ms`;
+    const auto = Math.round(autoLatency() * 1000);
+    $('avTip').textContent = (ctx ? `设备报告的输出延迟 ${auto} ms，已自动补偿。` : '开始播放后会显示设备报告的输出延迟，并自动补偿。') +
+      '如果高亮比声音早，把数值调大；比声音晚，调小。';
+  }
+  $('avSlider').addEventListener('input', (e) => { s.avOffset = Number(e.target.value); save(); renderAv(); });
+  $('syncBox').addEventListener('toggle', renderAv);
+
   renderAll();
   renderPlay();
   applyMode();
+  renderAv();
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(() => {}));
