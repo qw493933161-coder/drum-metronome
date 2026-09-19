@@ -48,9 +48,14 @@
     beats: clamp(saved.beats || 4, LIMITS.beats),
     subdiv: clamp(saved.subdiv || 1, LIMITS.subdiv),
     ticks: saved.ticks !== false,
-    mode: saved.mode === 'groove' ? 'groove' : 'metro',
+    mode: ['groove', 'pad', 'combo'].includes(saved.mode) ? saved.mode : 'metro',
+    combo: Array.isArray(saved.combo) ? saved.combo : null,
+    ctab: ['long', 'six', 'trip'].includes(saved.ctab) ? saved.ctab : 'long',
+    cclick: saved.cclick !== false,
     groove: typeof saved.groove === 'string' ? saved.groove : 'rock-q',
     gclick: saved.gclick !== false,
+    pad: typeof saved.pad === 'string' ? saved.pad : 'single8',
+    pclick: saved.pclick !== false,
     cells: []
   };
   const zeros = () => '0'.repeat(s.subdiv);
@@ -151,11 +156,11 @@
     src.start(t, Math.random() * 0.5);
     src.stop(t + dur + 0.02);
   }
-  function snare(t) {
-    noiseHit(t, 1500, 0.7, 0.16);
+  function snare(t, vol = 1) {
+    noiseHit(t, 1500, 0.7 * vol, 0.16);
     const o = ctx.createOscillator(), g = ctx.createGain();
     o.type = 'triangle'; o.frequency.value = 190;
-    g.gain.setValueAtTime(0.45, t);
+    g.gain.setValueAtTime(0.45 * vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
     o.connect(g).connect(out);
     o.start(t); o.stop(t + 0.12);
@@ -180,15 +185,78 @@
     }
   }
 
+  // ---------- 鼓垫练习：单一军鼓/鼓垫音，手序 R/L，'>' 为重音，'.' 为休止 ----------
+  const PADS = [
+    { id: 'single8', level: '入门', name: '单击（八分）', beats: 4, spb: 2,
+      desc: '左右手交替，每半拍一下。先让左右手的高度、力度、声音完全一样。',
+      seq: 'R L R L R L R L' },
+    { id: 'single16', level: '入门', name: '单击（十六分）', beats: 4, spb: 4,
+      desc: '同样左右交替，速度翻倍。放松手腕，让棍子自己弹起来。',
+      seq: 'R L R L R L R L R L R L R L R L' },
+    { id: 'single3', level: '基础', name: '单击（三连音）', beats: 4, spb: 3,
+      desc: '每拍三下，左右手交替，所以每拍起手的手都在换（右左右 / 左右左）。',
+      seq: 'R L R L R L R L R L R L' },
+    { id: 'double16', level: '基础', name: '双击（十六分）', beats: 4, spb: 4,
+      desc: '每只手连打两下，第二下靠棍子的反弹，别用力砸。',
+      seq: 'R R L L R R L L R R L L R R L L' },
+    { id: 'para', level: '基础', name: '单复合 Paradiddle', beats: 4, spb: 4,
+      desc: '右左右右 左右左左，每组第一下重音。所有复合类练习的基础。',
+      seq: 'R> L R R L> R L L R> L R R L> R L L' },
+    { id: 'para-inv', level: '进阶', name: '反向复合 Inverted', beats: 4, spb: 4,
+      desc: '右左左右 左右右左：把单复合的双击挪到中间，换手的位置变了。',
+      seq: 'R L L R L R R L R L L R L R R L' },
+    { id: 'para-2', level: '进阶', name: '双复合 Double Paradiddle', beats: 4, spb: 3,
+      desc: '右左右左右右 左右左右左左，三连音一组 6 下，每组第一下重音。',
+      seq: 'R> L R L R R L> R L R L L' },
+    { id: 'para-3', level: '进阶', name: '三复合 Triple Paradiddle', beats: 4, spb: 4,
+      desc: '每组 8 下：右左右左右左右右，接着左右左右左右左左。',
+      seq: 'R> L R L R L R R L> R L R L R L L' },
+    { id: 'para-dd', level: '进阶', name: '复合双击 Paradiddle-diddle', beats: 4, spb: 3,
+      desc: '右左右右左左 左右左左右右，三连音每拍两下换手，第一下重音。',
+      seq: 'R> L R R L L L> R L L R R' },
+    { id: 'roll5', level: '进阶', name: '五击滚奏 Five-stroke roll', beats: 4, spb: 4,
+      desc: '右右左左 + 右（重音落在第 2 拍），下一组左右互换。前四下是双击，最后一下落稳。',
+      seq: 'R R L L R> . . . L L R R L> . . .' }
+  ];
+  PADS.forEach((p) => {
+    p.hits = p.seq.split(/\s+/).map((tok) => {
+      if (tok === '.') return null;
+      const m = /^([RL])(>?)$/.exec(tok);
+      return { h: m[1], a: m[2] === '>' };
+    });
+    if (p.hits.length !== p.beats * p.spb) console.error('pad length mismatch', p.id, p.hits.length);
+  });
+
+  function schedulePad() {
+    const ex = PADS.find((x) => x.id === s.pad) || PADS[0];
+    const total = ex.beats * ex.spb;
+    const horizon = ctx.currentTime + 0.12;
+    while (nextTime < horizon) {
+      if (gstep >= total) gstep = 0;
+      const hit = ex.hits[gstep];
+      if (hit) snare(nextTime, hit.a ? 1 : 0.62);
+      if (s.pclick && gstep % ex.spb === 0) tone(nextTime, gstep === 0 ? 0 : 1, 0.45);
+      queue.push({ t: nextTime, groove: true, step: gstep });
+      nextTime += 60 / s.bpm / ex.spb;
+      gstep++;
+    }
+  }
+
   let gcols = [], glit = -1;
   function lightGroove(step) {
     if (glit >= 0 && gcols[glit]) gcols[glit].forEach((e) => e.classList.remove('cur'));
     glit = step;
     if (gcols[step]) gcols[step].forEach((e) => e.classList.add('cur'));
-    moveScoreCursor(step);
+    if (s.mode === 'combo') moveComboCursor(step);
+    else moveScoreCursor(step);
   }
 
-  const tick = () => (s.mode === 'groove' ? scheduleGroove() : schedule());
+  const tick = () => {
+    if (s.mode === 'groove') scheduleGroove();
+    else if (s.mode === 'pad') schedulePad();
+    else if (s.mode === 'combo') scheduleCombo();
+    else schedule();
+  };
 
   // UI follows the audio clock via setInterval (rAF can stall when a tab isn't painting)
   function drain() {
@@ -217,6 +285,10 @@
 
   // ---------- transport ----------
   async function start() {
+    if (s.mode === 'combo' && !s.combo.length) {
+      $('cHint').textContent = '先从下面选几个时值放进来，再点开始';
+      return;
+    }
     if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
     await ctx.resume();
     if (!noiseBuf) {
@@ -558,8 +630,12 @@
   function applyMode() {
     $('viewMetro').hidden = s.mode !== 'metro';
     $('viewGroove').hidden = s.mode !== 'groove';
+    $('viewPad').hidden = s.mode !== 'pad';
+    $('viewCombo').hidden = s.mode !== 'combo';
     document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === s.mode));
     if (s.mode === 'groove') { renderGroove(); renderGrooveList(); }
+    if (s.mode === 'pad') { renderPad(); renderPadList(); }
+    if (s.mode === 'combo') renderCombo();
   }
   $('seg').addEventListener('click', (e) => {
     const btn = e.target.closest('button');
@@ -699,13 +775,464 @@
     return `<svg viewBox="0 0 ${W} ${H}" data-left="${left}" data-sw="${sw}" style="width:100%;height:auto;display:block">${s}</svg>`;
   }
 
+  // ---------- 鼓垫谱（单线谱）：符头在线上，符干朝上，'>' 重音，下方 R/L 手序 ----------
+  function drawVoice(o) {
+    const { beats, spb, left, sw, set, headsAt, beamY, restCY, accents } = o;
+    const X = (st) => left + (st + 0.5) * sw;
+    const stemX = (st) => X(st) + 4.6;
+    const beamRectY = (level) => beamY + (level - 1) * 5;
+    let s2 = '';
+    for (let b = 0; b < beats; b++) {
+      let bits = '';
+      for (let k = 0; k < spb; k++) bits += set.has(b * spb + k) ? '1' : '0';
+      const { ev, tuplet } = rhythmEvents(bits);
+      const it = ev.map((e) => ({ e, st: b * spb + e.start }));
+      const groups = [];
+      let run = [];
+      it.forEach((x, i) => {
+        if (!x.e.rest && x.e.beams >= 1) run.push(i);
+        else { if (run.length >= 2) groups.push(run); run = []; }
+      });
+      if (run.length >= 2) groups.push(run);
+      const grouped = new Set(groups.flat());
+      groups.forEach((gr) => {
+        for (let level = 1; level <= 3; level++) {
+          gr.forEach((i, k) => {
+            if (it[i].e.beams < level) return;
+            const next = gr[k + 1], prev = gr[k - 1];
+            const y = beamRectY(level);
+            if (next !== undefined && it[next].e.beams >= level) {
+              s2 += `<rect x="${stemX(it[i].st) - 0.7}" y="${y}" width="${stemX(it[next].st) - stemX(it[i].st) + 1.4}" height="3" fill="currentColor"/>`;
+            } else if (!(prev !== undefined && it[prev].e.beams >= level)) {
+              const right = next !== undefined;
+              s2 += `<rect x="${right ? stemX(it[i].st) - 0.7 : stemX(it[i].st) - 6.7}" y="${y}" width="7.4" height="3" fill="currentColor"/>`;
+            }
+          });
+        }
+      });
+      it.forEach((x, i) => {
+        const cx = X(x.st);
+        if (x.e.rest) {
+          const mid = left + (x.st + x.e.dur / 2) * sw;
+          s2 += `<g transform="translate(0 ${restCY - 27.5})">${restGlyph(mid, x.e)}</g>`;
+          return;
+        }
+        const hs = headsAt(x.st);
+        hs.forEach((h) => {
+          s2 += `<ellipse cx="${cx}" cy="${h.y}" rx="4.8" ry="3.5" transform="rotate(-20 ${cx} ${h.y})" fill="currentColor"/>`;
+        });
+        s2 += `<line x1="${stemX(x.st)}" y1="${hs[0].y - 1}" x2="${stemX(x.st)}" y2="${beamY}" stroke="currentColor" stroke-width="1.5"/>`;
+        if (x.e.beams >= 1 && !grouped.has(i)) {
+          for (let level = 0; level < x.e.beams; level++) {
+            s2 += `<path d="M${stemX(x.st)} ${beamY + level * 5} q 7 4 5 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>`;
+          }
+        }
+        if (x.e.dots) s2 += `<circle cx="${cx + 9.5}" cy="${hs[0].y - 3}" r="1.6" fill="currentColor"/>`;
+        if (accents && accents.has(x.st)) {
+          const ay = beamY - 9;
+          s2 += `<path d="M${cx - 4.6} ${ay - 3.6} L${cx + 4.6} ${ay} L${cx - 4.6} ${ay + 3.6}" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>`;
+        }
+      });
+      if (tuplet) {
+        const x1 = X(b * spb) - 7, x2 = X((b + 1) * spb - 1) + 8, mid = (x1 + x2) / 2;
+        const by = beamY - 10 - (accents ? 14 : 0);
+        s2 += `<path d="M${x1} ${by + 4} V${by} H${mid - 6} M${mid + 6} ${by} H${x2} V${by + 4}" fill="none" stroke="currentColor" stroke-width="1.2"/>`;
+        s2 += `<text x="${mid}" y="${by + 4.6}" text-anchor="middle" font-size="14" font-weight="700" font-style="italic" font-family="serif" fill="currentColor">${tuplet}</text>`;
+      }
+    }
+    return s2;
+  }
+
+  function padSvg(ex) {
+    const beats = ex.beats, spb = ex.spb, total = beats * spb;
+    const lineY = 74, left = 58, sw = total <= 12 ? 26 : 22;
+    const W = left + total * sw + 18, H = 132;
+    const X = (st) => left + (st + 0.5) * sw;
+    let s2 = `<line x1="8" y1="${lineY}" x2="${W - 8}" y2="${lineY}" stroke="currentColor" stroke-width="1.2"/>`;
+    s2 += `<rect x="14" y="${lineY - 9}" width="3.2" height="18" fill="currentColor"/><rect x="21" y="${lineY - 9}" width="3.2" height="18" fill="currentColor"/>`;
+    s2 += `<text x="42" y="${lineY - 1.5}" text-anchor="middle" font-size="16" font-weight="700" font-family="serif" fill="currentColor">${beats}</text>`;
+    s2 += `<text x="42" y="${lineY + 15.5}" text-anchor="middle" font-size="16" font-weight="700" font-family="serif" fill="currentColor">4</text>`;
+    s2 += `<line x1="${W - 13}" y1="${lineY - 9}" x2="${W - 13}" y2="${lineY + 9}" stroke="currentColor" stroke-width="1.2"/><rect x="${W - 10}" y="${lineY - 9}" width="3" height="18" fill="currentColor"/>`;
+    for (let b = 1; b < beats; b++) {
+      const gx = left + b * spb * sw;
+      s2 += `<line x1="${gx}" y1="20" x2="${gx}" y2="${H - 18}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 4" opacity=".22"/>`;
+    }
+    const set = new Set(), accents = new Set();
+    ex.hits.forEach((h, i) => { if (h) { set.add(i); if (h.a) accents.add(i); } });
+    s2 += drawVoice({ beats, spb, left, sw, set, accents, beamY: lineY - 34, restCY: lineY, headsAt: () => [{ y: lineY }] });
+    ex.hits.forEach((h, i) => {
+      if (!h) return;
+      s2 += `<text x="${X(i)}" y="${lineY + 26}" text-anchor="middle" font-size="${h.a ? 15 : 13}" font-weight="700" fill="${h.h === 'R' ? '#d8452a' : '#3b4fd6'}">${h.h}</text>`;
+    });
+    const labels = spb === 4 ? ['', 'e', '&', 'a'] : spb === 3 ? ['', 'trip', 'let'] : ['', '&'];
+    for (let i = 0; i < total; i++) {
+      const k = i % spb;
+      s2 += k === 0
+        ? `<text x="${X(i)}" y="${H - 5}" text-anchor="middle" font-size="13" font-weight="700" fill="currentColor">${i / spb + 1}</text>`
+        : `<text x="${X(i)}" y="${H - 5}" text-anchor="middle" font-size="10" fill="currentColor" opacity=".6">${labels[k]}</text>`;
+    }
+    s2 += `<rect class="cur" x="0" y="20" width="${sw}" height="${H - 18 - 20}" rx="4" fill="#ff6b4a" opacity="0"/>`;
+    return `<svg viewBox="0 0 ${W} ${H}" data-left="${left}" data-sw="${sw}" style="width:100%;height:auto;display:block">${s2}</svg>`;
+  }
+
+  // ---------- 鼓垫练习界面 ----------
+  function renderPad() {
+    const ex = PADS.find((x) => x.id === s.pad) || PADS[0];
+    $('pTitle').textContent = ex.name;
+    $('pDesc').textContent = ex.desc;
+    $('pClick').checked = s.pclick;
+    const total = ex.beats * ex.spb;
+    const labels = ex.spb === 4 ? ['', 'e', '&', 'a'] : ex.spb === 3 ? ['', 'trip', 'let'] : ['', '&'];
+    const host = $('pGrid');
+    host.innerHTML = '';
+    gcols = Array.from({ length: total }, () => []);
+    glit = -1;
+    const lane = (name) => {
+      const row = document.createElement('div');
+      row.className = 'lane';
+      const label = document.createElement('span');
+      label.className = 'lane-name';
+      label.textContent = name;
+      const cells = document.createElement('div');
+      cells.className = 'cells';
+      row.append(label, cells);
+      host.appendChild(row);
+      return cells;
+    };
+    const head = lane('');
+    for (let i = 0; i < total; i++) {
+      const k = i % ex.spb;
+      const sp = document.createElement('span');
+      sp.className = 'cnt' + (k === 0 ? ' bs' : '');
+      sp.textContent = k === 0 ? String(i / ex.spb + 1) : labels[k];
+      head.appendChild(sp);
+    }
+    const cells = lane('手序');
+    ex.hits.forEach((h, i) => {
+      const c = document.createElement('div');
+      c.className = 'cell stk' + (i % ex.spb === 0 ? ' bs' : '') + (h ? ` h-${h.h}` : '') + (h && h.a ? ' acc' : '');
+      c.textContent = h ? h.h : '';
+      cells.appendChild(c);
+      gcols[i].push(c);
+    });
+  }
+  function renderPadList() {
+    const host = $('pList');
+    host.innerHTML = '';
+    PADS.forEach((p) => {
+      const b = document.createElement('button');
+      b.className = 'g-item' + (p.id === s.pad ? ' active' : '');
+      b.dataset.id = p.id;
+      b.innerHTML = `<span class="g-name">${p.name}</span><span class="g-level lv-${p.level}">${p.level}</span>`;
+      host.appendChild(b);
+    });
+  }
+  $('pList').addEventListener('click', (e) => {
+    const item = e.target.closest('.g-item');
+    if (!item) return;
+    s.pad = item.dataset.id;
+    save();
+    renderPad();
+    renderPadList();
+  });
+  $('pClick').addEventListener('change', (e) => { s.pclick = e.target.checked; save(); });
+
+  // ---------- 变速练习：把不同时值拼成一串，按 4/4 自动分小节 ----------
+  // 时间单位 = 1/12 拍：十六分=3，八分=6，四分=12，三连音八分=4；一小节 = 48
+  const BAR = 48;
+  const NOTE_PROPS = {
+    48: { hollow: 1, nostem: 1 }, 36: { hollow: 1, dots: 1 }, 24: { hollow: 1 }, 18: { dots: 1 },
+    12: {}, 9: { beams: 1, dots: 1 }, 6: { beams: 1 }, 3: { beams: 2 }
+  };
+  const REST_DURS = [48, 24, 12, 6, 3];
+  const N = (d) => ({ k: 'n', d }), R = (d) => ({ k: 'r', d }), C = (b) => ({ k: 'c', b });
+  const figUnits = (f) => (f.k === 'c' ? 12 : f.d);
+
+  function figEvents(f, st) {
+    if (f.k === 'c') {
+      const mult = 12 / f.b.length;
+      const { ev, tuplet } = rhythmEvents(f.b);
+      return ev.map((e) => ({ st: st + e.start * mult, dur: e.dur * mult, rest: !!e.rest, beams: e.beams, dots: e.dots, tup: tuplet }));
+    }
+    if (f.k === 'r') {
+      return [{ st, dur: f.d, rest: true, beams: f.d >= 12 ? 0 : f.d >= 6 ? 1 : 2, dots: 0, shape: f.d === 48 ? 'whole' : f.d === 24 ? 'half' : '', tup: 0 }];
+    }
+    const p = NOTE_PROPS[f.d] || {};
+    return [{ st, dur: f.d, rest: false, beams: p.beams || 0, dots: p.dots || 0, hollow: !!p.hollow, nostem: !!p.nostem, tup: 0 }];
+  }
+
+  function layoutCombo(seq) {
+    const bars = [];
+    let cur = [], used = 0;
+    seq.forEach((f) => {
+      cur.push(f); used += figUnits(f);
+      if (used >= BAR) { bars.push(cur); cur = []; used = 0; }
+    });
+    if (cur.length) bars.push(cur);
+    const rows = bars.map((figs) => {
+      let st = 0;
+      const events = [];
+      figs.forEach((f) => { events.push(...figEvents(f, st)); st += figUnits(f); });
+      return { events, used: st };
+    });
+    return { rows, used };   // used = 最后一小节已占用的单位（0 表示刚好写满）
+  }
+
+  function sanitizeCombo(seq) {
+    const out = [];
+    let used = 0;
+    (Array.isArray(seq) ? seq : []).forEach((f) => {
+      const ok = f && ((f.k === 'n' && NOTE_PROPS[f.d]) || (f.k === 'r' && REST_DURS.includes(f.d)) ||
+        (f.k === 'c' && typeof f.b === 'string' && /^[01]+$/.test(f.b) && (f.b.length === 3 || f.b.length === 4)));
+      if (!ok) return;
+      const u = figUnits(f);
+      if (used + u > BAR) return;
+      out.push(f);
+      used += u;
+      if (used === BAR) used = 0;
+    });
+    return out;
+  }
+
+  // 通用：把一串事件画成一行五线（单线）谱，按拍分组连音线，三连音自动加括号
+  function drawEvents(o) {
+    const { events, left, uw, lineY, beamY, bracketY } = o;
+    const X = (st) => left + st * uw + 6;
+    const stemX = (st) => X(st) + 4.6;
+    const beamRectY = (level) => beamY + (level - 1) * 5;
+    let out = '';
+
+    const groups = [];
+    let run = [];
+    events.forEach((e, i) => {
+      const ok = !e.rest && e.beams >= 1;
+      if (ok && (!run.length || Math.floor(events[run[run.length - 1]].st / 12) === Math.floor(e.st / 12))) run.push(i);
+      else {
+        if (run.length >= 2) groups.push(run);
+        run = ok ? [i] : [];
+      }
+    });
+    if (run.length >= 2) groups.push(run);
+    const grouped = new Set(groups.flat());
+    groups.forEach((gr) => {
+      for (let level = 1; level <= 3; level++) {
+        gr.forEach((i, k) => {
+          if (events[i].beams < level) return;
+          const next = gr[k + 1], prev = gr[k - 1];
+          const y = beamRectY(level);
+          if (next !== undefined && events[next].beams >= level) {
+            out += `<rect x="${stemX(events[i].st) - 0.7}" y="${y}" width="${stemX(events[next].st) - stemX(events[i].st) + 1.4}" height="3" fill="currentColor"/>`;
+          } else if (!(prev !== undefined && events[prev].beams >= level)) {
+            const right = next !== undefined;
+            out += `<rect x="${right ? stemX(events[i].st) - 0.7 : stemX(events[i].st) - 6.7}" y="${y}" width="7.4" height="3" fill="currentColor"/>`;
+          }
+        });
+      }
+    });
+
+    events.forEach((e, i) => {
+      if (e.rest) {
+        const cx = left + (e.st + Math.min(e.dur, 12) / 2) * uw + 2;
+        if (e.shape === 'half') out += `<rect x="${cx - 6}" y="${lineY - 4.5}" width="12" height="4.5" fill="currentColor"/>`;
+        else if (e.shape === 'whole') out += `<rect x="${cx - 6}" y="${lineY}" width="12" height="4.5" fill="currentColor"/>`;
+        else out += `<g transform="translate(0 ${lineY - 27.5})">${restGlyph(cx, e)}</g>`;
+        return;
+      }
+      const cx = X(e.st);
+      if (e.hollow) {
+        const rx = e.nostem ? 5.6 : 4.8;
+        out += `<ellipse cx="${cx}" cy="${lineY}" rx="${rx}" ry="3.6" transform="rotate(-20 ${cx} ${lineY})" fill="none" stroke="currentColor" stroke-width="1.7"/>`;
+      } else {
+        out += `<ellipse cx="${cx}" cy="${lineY}" rx="4.8" ry="3.5" transform="rotate(-20 ${cx} ${lineY})" fill="currentColor"/>`;
+      }
+      if (!e.nostem) out += `<line x1="${stemX(e.st)}" y1="${lineY - 1}" x2="${stemX(e.st)}" y2="${beamY}" stroke="currentColor" stroke-width="1.5"/>`;
+      if (e.beams >= 1 && !grouped.has(i)) {
+        for (let level = 0; level < e.beams; level++) {
+          out += `<path d="M${stemX(e.st)} ${beamY + level * 5} q 7 4 5 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>`;
+        }
+      }
+      if (e.dots) out += `<circle cx="${cx + 9.5}" cy="${lineY - 3}" r="1.6" fill="currentColor"/>`;
+    });
+
+    const tup = {};
+    events.forEach((e) => {
+      if (!e.tup) return;
+      const beat = Math.floor(e.st / 12);
+      const t = tup[beat] || (tup[beat] = { n: e.tup, a: e.st, b: e.st });
+      t.a = Math.min(t.a, e.st); t.b = Math.max(t.b, e.st);
+    });
+    Object.values(tup).forEach((t) => {
+      const x1 = X(t.a) - 7, x2 = X(t.b) + 8, mid = (x1 + x2) / 2, by = bracketY;
+      out += `<path d="M${x1} ${by + 4} V${by} H${mid - 6} M${mid + 6} ${by} H${x2} V${by + 4}" fill="none" stroke="currentColor" stroke-width="1.2"/>`;
+      out += `<text x="${mid}" y="${by + 4.6}" text-anchor="middle" font-size="14" font-weight="700" font-style="italic" font-family="serif" fill="currentColor">${t.n}</text>`;
+    });
+    return out;
+  }
+
+  // 选择板上的小图标：一个图形的记谱
+  function miniFig(f) {
+    const u = figUnits(f);
+    const uw = Math.min(5.4, 70 / u);
+    const left = 6, lineY = 50, W = Math.round(left * 2 + Math.max(u * uw, 26) + 10);
+    const body = drawEvents({ events: figEvents(f, 0), left, uw, lineY, beamY: 18, bracketY: 6 });
+    return `<svg viewBox="0 0 ${W} 64" width="${Math.round(W * 0.8)}" height="51" aria-hidden="true"><line x1="2" y1="${lineY}" x2="${W - 2}" y2="${lineY}" stroke="currentColor" stroke-width="1" opacity=".35"/>${body}</svg>`;
+  }
+
+  const CUW = 6.4, CLEFT = 58, CRH = 112;
+  function comboSvg(layout) {
+    const rows = layout.rows.slice();
+    if (layout.used === 0) rows.push({ events: [], used: 0 });
+    const W = CLEFT + BAR * CUW + 18, H = rows.length * CRH + 6;
+    let s2 = '';
+    rows.forEach((row, r) => {
+      const top = r * CRH, lineY = top + 68, beamY = lineY - 34;
+      const isLast = r === rows.length - 1;
+      if (isLast && row.used < BAR) {
+        s2 += `<rect x="${CLEFT + row.used * CUW}" y="${top + 16}" width="${(BAR - row.used) * CUW}" height="${CRH - 34}" rx="6" fill="currentColor" opacity=".06"/>`;
+      }
+      s2 += `<line x1="8" y1="${lineY}" x2="${W - 8}" y2="${lineY}" stroke="currentColor" stroke-width="1.2"/>`;
+      s2 += `<rect x="14" y="${lineY - 9}" width="3.2" height="18" fill="currentColor"/><rect x="21" y="${lineY - 9}" width="3.2" height="18" fill="currentColor"/>`;
+      if (r === 0) {
+        s2 += `<text x="42" y="${lineY - 1.5}" text-anchor="middle" font-size="16" font-weight="700" font-family="serif" fill="currentColor">4</text>`;
+        s2 += `<text x="42" y="${lineY + 15.5}" text-anchor="middle" font-size="16" font-weight="700" font-family="serif" fill="currentColor">4</text>`;
+      }
+      s2 += `<line x1="${W - 13}" y1="${lineY - 9}" x2="${W - 13}" y2="${lineY + 9}" stroke="currentColor" stroke-width="1.2"/><rect x="${W - 10}" y="${lineY - 9}" width="3" height="18" fill="currentColor"/>`;
+      s2 += `<text x="10" y="${top + 22}" font-size="11" fill="currentColor" opacity=".55">${r + 1}</text>`;
+      for (let b = 1; b < 4; b++) {
+        const gx = CLEFT + b * 12 * CUW;
+        s2 += `<line x1="${gx}" y1="${top + 18}" x2="${gx}" y2="${top + CRH - 26}" stroke="currentColor" stroke-width="1" stroke-dasharray="2 4" opacity=".22"/>`;
+      }
+      for (let b = 0; b < 4; b++) {
+        s2 += `<text x="${CLEFT + b * 12 * CUW + 6}" y="${lineY + 34}" text-anchor="middle" font-size="12" font-weight="700" fill="currentColor" opacity=".7">${b + 1}</text>`;
+      }
+      s2 += `<g>${drawEvents({ events: row.events, left: CLEFT, uw: CUW, lineY, beamY, bracketY: beamY - 10 })}</g>`;
+    });
+    s2 += `<rect class="cur" x="0" y="0" width="${3 * CUW}" height="${CRH - 34}" rx="4" fill="#ff6b4a" opacity="0"/>`;
+    return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${s2}</svg>`;
+  }
+
+  function moveComboCursor(unit) {
+    const c = $('cSvgHost').querySelector('.cur');
+    if (!c) return;
+    if (unit < 0) { c.setAttribute('opacity', '0'); return; }
+    const bar = Math.floor(unit / BAR), off = unit % BAR;
+    c.setAttribute('x', CLEFT + off * CUW);
+    c.setAttribute('y', bar * CRH + 16);
+    c.setAttribute('opacity', '0.3');
+  }
+
+  let comboCache = null;
+  function comboTimeline() {
+    const L = layoutCombo(s.combo);
+    const hits = new Set();
+    L.rows.forEach((row, b) => row.events.forEach((e) => { if (!e.rest) hits.add(b * BAR + e.st); }));
+    comboCache = { hits, total: Math.max(1, L.rows.length) * BAR };
+    return comboCache;
+  }
+  function scheduleCombo() {
+    const c = comboCache || comboTimeline();
+    const horizon = ctx.currentTime + 0.12;
+    while (nextTime < horizon) {
+      if (gstep >= c.total) gstep = 0;
+      if (c.hits.has(gstep)) snare(nextTime, 0.9);
+      if (s.cclick && gstep % 12 === 0) tone(nextTime, gstep % BAR === 0 ? 0 : 1, 0.45);
+      queue.push({ t: nextTime, groove: true, step: gstep });
+      nextTime += 60 / s.bpm / 12;
+      gstep++;
+    }
+  }
+
+  const PALETTE = {
+    long: [N(48), N(36), N(24), N(18), N(12), N(9), N(6), N(3), R(48), R(24), R(12), R(6), R(3)],
+    six: catalog(4).map((i) => i.bits).filter((b) => b !== '0000' && b !== '1000').map(C),
+    trip: catalog(3).map((i) => i.bits).filter((b) => b !== '000' && b !== '100').map(C)
+  };
+  const TAB_NAMES = { long: '长音 · 休止', six: '十六分组合', trip: '三连音' };
+  const COMBO_PRESETS = [
+    { name: '二分 + 四分 + 前八后十六 | 全音符', seq: [N(24), N(12), C('1011'), N(48)] },
+    { name: '四分、八分、十六分递进 | 前八后十六 / 前十六后八交替', seq: [N(12), C('1010'), C('1111'), R(12), C('1011'), C('1110'), C('1011'), C('1110')] },
+    { name: '附点节奏：附点四分+八分 | 附点二分+四分', seq: [N(18), N(6), N(18), N(6), N(36), N(12)] },
+    { name: '三连音混合 | 摇摆八分', seq: [C('111'), C('111'), N(12), N(12), C('101'), C('101'), C('101'), C('101')] },
+    { name: '休止符组合', seq: [N(12), R(12), N(12), R(12), N(24), R(12), C('1011')] }
+  ];
+  s.combo = sanitizeCombo(s.combo && s.combo.length ? s.combo : COMBO_PRESETS[0].seq);
+
+  function comboChanged() {
+    comboCache = null;
+    save();
+    renderCombo();
+  }
+  function renderCombo() {
+    const layout = layoutCombo(s.combo);
+    $('cSvgHost').innerHTML = comboSvg(layout);
+    const remaining = layout.used === 0 ? BAR : BAR - layout.used;
+    $('cRemain').textContent = `当前小节还能放 ${remaining / 12} 拍`;
+    $('cHint').textContent = s.combo.length ? '' : '先从下面选几个时值放进来';
+    $('cClick').checked = s.cclick;
+
+    $('cTabs').innerHTML = '';
+    Object.keys(TAB_NAMES).forEach((k) => {
+      const b = document.createElement('button');
+      b.dataset.tab = k;
+      b.className = k === s.ctab ? 'on' : '';
+      b.textContent = TAB_NAMES[k];
+      $('cTabs').appendChild(b);
+    });
+    const pal = $('cPalette');
+    pal.innerHTML = '';
+    PALETTE[s.ctab].forEach((f, i) => {
+      const b = document.createElement('button');
+      b.className = 'chip';
+      b.dataset.i = i;
+      b.disabled = figUnits(f) > remaining;
+      b.innerHTML = miniFig(f);
+      pal.appendChild(b);
+    });
+    const pl = $('cPresets');
+    pl.innerHTML = '';
+    COMBO_PRESETS.forEach((p, i) => {
+      const b = document.createElement('button');
+      b.className = 'g-item';
+      b.dataset.i = i;
+      b.innerHTML = `<span class="g-name">${p.name}</span>`;
+      pl.appendChild(b);
+    });
+  }
+  $('cTabs').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    s.ctab = b.dataset.tab;
+    save();
+    renderCombo();
+  });
+  $('cPalette').addEventListener('click', (e) => {
+    const b = e.target.closest('.chip');
+    if (!b || b.disabled) return;
+    s.combo.push(JSON.parse(JSON.stringify(PALETTE[s.ctab][Number(b.dataset.i)])));
+    comboChanged();
+  });
+  $('cUndo').addEventListener('click', () => { s.combo.pop(); comboChanged(); });
+  $('cClear').addEventListener('click', () => { s.combo = []; comboChanged(); });
+  $('cPresets').addEventListener('click', (e) => {
+    const b = e.target.closest('.g-item');
+    if (!b) return;
+    s.combo = sanitizeCombo(COMBO_PRESETS[Number(b.dataset.i)].seq);
+    comboChanged();
+  });
+  $('cClick').addEventListener('change', (e) => { s.cclick = e.target.checked; save(); });
+
+  const LEGEND_GROOVE ='<span><b>×</b> 踩镲（线上方）</span><span><b>×</b>上带圈 开镲</span><span><b>●</b> 军鼓（第 3 间）</span><span><b>●</b> 底鼓（第 1 间，符干朝下）</span>';
+  const LEGEND_PAD = '<span><b>R</b> 右手　<b>L</b> 左手</span><span><b>&gt;</b> 重音</span><span>单线谱：符头都打在鼓垫上</span>';
+
   let scoreCursor = null, scoreGeom = null;
   function renderScore() {
-    const g = GROOVES.find((x) => x.id === s.groove) || GROOVES[0];
+    const isPad = s.mode === 'pad';
+    const g = isPad ? (PADS.find((x) => x.id === s.pad) || PADS[0]) : (GROOVES.find((x) => x.id === s.groove) || GROOVES[0]);
     $('scoreTitle').textContent = g.name;
     $('scoreSub').textContent = `${g.level} · ${g.beats}/4 拍`;
+    $('scoreLegend').innerHTML = isPad ? LEGEND_PAD : LEGEND_GROOVE;
     const host = $('scoreSvgHost');
-    host.innerHTML = scoreSvg(g);
+    host.innerHTML = isPad ? padSvg(g) : scoreSvg(g);
     const svg = host.firstElementChild;
     scoreCursor = svg.querySelector('.cur');
     scoreGeom = { left: Number(svg.dataset.left), sw: Number(svg.dataset.sw) };
@@ -716,7 +1243,8 @@
     scoreCursor.setAttribute('x', scoreGeom.left + step * scoreGeom.sw);
     scoreCursor.setAttribute('opacity', '0.28');
   }
-  $('openScore').addEventListener('click', () => { renderScore(); $('score').hidden = false; });
+  ['openScore', 'openPadScore'].forEach((id) =>
+    $(id).addEventListener('click', () => { renderScore(); $('score').hidden = false; }));
   $('scoreClose').addEventListener('click', () => { $('score').hidden = true; });
   $('scorePlay').addEventListener('click', () => (playing ? stop() : start()));
   document.querySelectorAll('[data-sbpm]').forEach((btn) =>

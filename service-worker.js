@@ -1,6 +1,6 @@
 // Cache-first offline shell. Bump CACHE_NAME whenever any precached file changes
 // so clients pick up the new version instead of serving stale files forever.
-const CACHE_NAME = 'drum-metronome-v14';
+const CACHE_NAME = 'drum-metronome-v16';
 const PRECACHE = [
   './',
   'index.html',

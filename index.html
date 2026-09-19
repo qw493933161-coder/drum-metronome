@@ -15,6 +15,8 @@
   <div class="seg" id="seg">
     <button data-mode="metro">节拍器</button>
     <button data-mode="groove">基础节奏</button>
+    <button data-mode="pad">鼓垫练习</button>
+    <button data-mode="combo">变速练习</button>
   </div>
 
   <section class="bpm">
@@ -76,6 +78,40 @@
     </section>
     <section class="g-list" id="gList"></section>
   </div>
+
+  <div class="view" id="viewPad" hidden>
+    <section class="groove-card">
+      <div class="groove-title" id="pTitle"></div>
+      <div class="groove-desc" id="pDesc"></div>
+      <button class="btn-score" id="openPadScore">查看曲谱</button>
+      <div class="grid" id="pGrid"></div>
+      <label class="check g-click"><input type="checkbox" id="pClick"><span>节拍参考音</span></label>
+    </section>
+    <section class="g-list" id="pList"></section>
+  </div>
+
+  <div class="view" id="viewCombo" hidden>
+    <section class="groove-card">
+      <div class="combo-head">
+        <div>
+          <div class="groove-title">变速练习</div>
+          <div class="groove-desc">把不同时值拼成一串，自动按 4/4 分小节，打出来跟着练。</div>
+        </div>
+      </div>
+      <div class="combo-tools"><button id="cUndo">撤销</button><button id="cClear">清空</button></div>
+      <div class="combo-score" id="cSvgHost"></div>
+      <div class="c-hint" id="cHint"></div>
+      <label class="check g-click"><input type="checkbox" id="cClick"><span>节拍参考音</span></label>
+    </section>
+    <section class="pattern">
+      <div class="pattern-title">添加时值</div>
+      <div class="pattern-sub" id="cRemain"></div>
+      <div class="seg mini" id="cTabs"></div>
+      <div class="chips" id="cPalette"></div>
+    </section>
+    <div class="pattern-title c-presets-title">预置组合（点一下替换当前）</div>
+    <section class="g-list" id="cPresets"></section>
+  </div>
 </main>
 
 <div class="sheet" id="sheet" hidden>
@@ -95,12 +131,7 @@
   </div>
   <div class="score-body">
     <div id="scoreSvgHost"></div>
-    <div class="score-legend">
-      <span><b>×</b> 踩镲（线上方）</span>
-      <span><b>×</b>上带圈 开镲</span>
-      <span><b>●</b> 军鼓（第 3 间）</span>
-      <span><b>●</b> 底鼓（第 1 间，符干朝下）</span>
-    </div>
+    <div class="score-legend" id="scoreLegend"></div>
     <div class="score-tip">横屏时谱面更大更清楚</div>
   </div>
   <div class="score-bar">
