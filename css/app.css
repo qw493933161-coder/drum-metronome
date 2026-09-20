@@ -277,3 +277,13 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 @media (orientation: landscape) and (max-height: 500px) { .song-paper { height: 78vh; } }
 .song-cloud { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--dim); line-height: 1.5; }
 .song-cloud button { flex-shrink: 0; height: 34px; padding: 0 12px; border-radius: 10px; background: var(--surface-2); color: var(--accent-2); font-size: 13px; }
+
+/* 应用内对话框 */
+.dlg { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 24px; background: rgba(8, 9, 14, 0.66); }
+.dlg[hidden] { display: none; }
+.dlg-panel { width: 100%; max-width: 340px; background: var(--surface); border-radius: 18px; padding: 20px; display: flex; flex-direction: column; gap: 14px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5); }
+.dlg-msg { font-size: 15px; line-height: 1.55; color: var(--text); }
+.dlg-input { width: 100%; background: var(--surface-2); color: var(--text); border: none; border-radius: 10px; padding: 12px; font-size: 16px; }
+.dlg-btns { display: flex; gap: 10px; }
+.dlg-btns button { flex: 1; height: 44px; border-radius: 12px; background: var(--surface-2); color: var(--text); font-size: 15px; }
+.dlg-btns button.ok { background: var(--accent); color: #fff; font-weight: 600; }

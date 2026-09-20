@@ -158,6 +158,7 @@
 
   async function addFile(file) {
     if (!file) return;
+    if (!/[.](gp|gp3|gp4|gp5|gpx|musicxml|xml|mxl|atex|alphatex)$/i.test(file.name)) { say('这不是谱文件：请选 .gp / .gp5 / .gpx / .musicxml 结尾的文件'); return; }
     if (file.size > 20 * 1024 * 1024) { say('文件太大了（超过 20 MB）'); return; }
     const rec = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
@@ -289,7 +290,7 @@
     $('songList').addEventListener('click', async (e) => {
       const del = e.target.closest('[data-del]');
       if (del) {
-        if (!window.confirm('从这台设备删除这份谱？')) return;
+        if (!(await window.AppDialog.confirm('删除这份谱？（开了云同步的话，其他设备上也会一起删除）', '删除'))) return;
         const old = await dbGet(del.dataset.del);
         await dbDel(del.dataset.del);
         if (old && old.synced) writeGone(readGone().concat([del.dataset.del]));

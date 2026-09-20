@@ -1,5 +1,34 @@
 (() => {
   const $ = (id) => document.getElementById(id);
+
+  // 应用内的确认/输入框：不依赖浏览器自带的 confirm/prompt（内嵌浏览器和部分手机浏览器会直接屏蔽它们，按钮就“点了没反应”）
+  function appDialog(msg, opts) {
+    return new Promise((resolve) => {
+      const box = $('dlg'), input = $('dlgInput');
+      $('dlgMsg').textContent = msg;
+      input.hidden = !(opts && opts.input);
+      input.value = (opts && opts.def) || '';
+      $('dlgYes').textContent = (opts && opts.yes) || '确定';
+      box.hidden = false;
+      if (!input.hidden) { input.focus(); input.select(); } else $('dlgYes').focus();
+      const done = (ok) => {
+        box.hidden = true;
+        $('dlgYes').onclick = $('dlgNo').onclick = box.onclick = input.onkeydown = null;
+        document.removeEventListener('keydown', onKey);
+        resolve(ok ? (input.hidden ? true : input.value) : (input.hidden ? false : null));
+      };
+      const onKey = (e) => { if (e.key === 'Escape') done(false); };
+      document.addEventListener('keydown', onKey);
+      $('dlgYes').onclick = () => done(true);
+      $('dlgNo').onclick = () => done(false);
+      box.onclick = (e) => { if (e.target === box) done(false); };
+      input.onkeydown = (e) => { if (e.key === 'Enter') done(true); };
+    });
+  }
+  window.AppDialog = {
+    confirm: (msg, yes) => appDialog(msg, { yes }),
+    prompt: (msg, def) => appDialog(msg, { input: true, def })
+  };
   const LIMITS = { bpm: [20, 300], beats: [1, 16], subdiv: [1, 8] };
   const SUB_NAMES = {
     1: '无细分（四分）', 2: '八分音符', 3: '三连音', 4: '十六分音符',
@@ -1475,10 +1504,10 @@
       host.appendChild(row);
     });
   }
-  function saveAs() {
+  async function saveAs() {
     if (!s.combo.length) { flash('先拼好内容再保存'); return; }
     const def = `我的练习 ${s.mine.length + 1}`;
-    const name = window.prompt('给这一页谱起个名字', def);
+    const name = await window.AppDialog.prompt('给这一页谱起个名字', def);
     if (name === null) return;
     const m = { id: Date.now().toString(36), name: name.trim() || def, seq: clone(s.combo), updated: Date.now() };
     s.mine.unshift(m);
@@ -1515,7 +1544,7 @@
     flash(`已保存「${m.name}」`);
   });
   $('cSaveAs').addEventListener('click', saveAs);
-  $('cMine').addEventListener('click', (e) => {
+  $('cMine').addEventListener('click', async (e) => {
     const exp = e.target.closest('.mine-exp');
     if (exp) {
       const m = s.mine.find((x) => x.id === exp.dataset.exp);
@@ -1525,7 +1554,7 @@
     const del = e.target.closest('.mine-del');
     if (del) {
       const m = s.mine.find((x) => x.id === del.dataset.del);
-      if (m && window.confirm(`删除「${m.name}」吗？`)) {
+      if (m && await window.AppDialog.confirm(`删除「${m.name}」吗？`, '删除')) {
         s.mine = s.mine.filter((x) => x.id !== m.id);
         s.gone = s.gone.filter((g) => g.id !== m.id).concat([{ id: m.id, at: Date.now() }]);   // 删除记号：让别的设备也删掉
         if (s.curMine === m.id) s.curMine = null;
