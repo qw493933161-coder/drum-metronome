@@ -74,7 +74,7 @@
   window.SyncCore = { merge, sig };
 
   // ---------- 设置存取 ----------
-  let cfg = { token: '', gistId: '', last: 0 };
+  let cfg = { token: '', gistId: '', songsGist: '', last: 0 };
   try { Object.assign(cfg, JSON.parse(localStorage.getItem(CFG_KEY)) || {}); } catch (e) { /* ignore */ }
   const saveCfg = () => { try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch (e) { /* ignore */ } };
 
@@ -262,6 +262,14 @@
   document.addEventListener('visibilitychange', () => { if (!document.hidden && cfg.token) schedule(500); });
   window.addEventListener('online', () => { if (cfg.token) schedule(500); });
   setInterval(() => { if (cfg.token && !document.hidden && !running) sync(); }, 120000);   // 开着不动时也定期拉取别的设备的改动
+
+  // 给曲谱页的“云端谱库”用：同一个令牌、另一个秘密 Gist；令牌本身不交出去
+  window.CloudApi = {
+    hasToken: () => !!cfg.token,
+    call: api,
+    songsGist: () => cfg.songsGist || '',
+    setSongsGist: (id) => { cfg.songsGist = id; saveCfg(); }
+  };
 
   wire();
   render();

@@ -275,3 +275,5 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 .at-selection div { background: rgba(255, 107, 74, 0.12); }
 .at-highlight * { fill: #e8481f; stroke: #e8481f; }
 @media (orientation: landscape) and (max-height: 500px) { .song-paper { height: 78vh; } }
+.song-cloud { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--dim); line-height: 1.5; }
+.song-cloud button { flex-shrink: 0; height: 34px; padding: 0 12px; border-radius: 10px; background: var(--surface-2); color: var(--accent-2); font-size: 13px; }
