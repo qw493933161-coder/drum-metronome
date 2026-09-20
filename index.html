@@ -137,14 +137,40 @@
   </div>
 
   <details class="sync-box" id="syncBox">
-    <summary>声画同步校准</summary>
+    <summary>设置（倒计时、声画同步、云同步）</summary>
     <div class="sync-body">
-      <div class="sync-row"><span>高亮延迟</span><b id="avVal">0 ms</b></div>
+      <div class="sync-row">
+        <span>开始前倒计时</span>
+        <select id="cdSec" aria-label="开始前倒计时">
+          <option value="0">关闭</option><option value="3">3 秒</option><option value="4">4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option>
+        </select>
+      </div>
+      <div class="sync-tip">按开始后，先用当前速度打几拍空拍“点”声，让你熟悉速度、摆好姿势，最后 4 拍是“1 2 3 4”，接着无缝进入练习。</div>
+      <div class="sync-sep"></div>
+      <div class="sync-row"><span>声画同步校准（高亮延迟）</span><b id="avVal">0 ms</b></div>
       <input type="range" id="avSlider" min="-80" max="500" step="10" value="0" aria-label="高亮延迟">
       <div class="sync-tip" id="avTip"></div>
+      <div class="sync-sep"></div>
+      <div class="sync-row"><span>云同步（多台设备共用）</span><b id="cloudState" class="cloud-state">未开启</b></div>
+      <div id="cloudOff">
+        <div class="sync-tip">把设置和保存的谱放进你自己 GitHub 账号里的一个秘密 Gist，手机、平板、电脑用同一个令牌就能看到一样的内容。<br>
+          ① 点 <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=drum-metronome" target="_blank" rel="noopener">这里</a> 生成令牌（只勾“gist”，有效期建议选“不过期”）；② 复制后粘贴到下面；③ 每台设备都填同一个令牌。令牌只存在本机浏览器里。</div>
+        <div class="cloud-row"><input type="password" id="cloudToken" placeholder="粘贴 GitHub 令牌" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="cloudEnable">开启</button></div>
+      </div>
+      <div id="cloudOn" hidden>
+        <div class="cloud-row"><button id="cloudNow">立即同步</button><button id="cloudChange">更换令牌</button><button id="cloudOff2">关闭同步</button></div>
+        <div class="sync-tip">改动后几秒内自动同步；声画校准是每台设备自己的，不同步。关闭同步只影响这台设备，云端数据保留。</div>
+      </div>
+      <div class="sync-tip" id="cloudMsg"></div>
     </div>
   </details>
 </main>
+
+<div class="countdown" id="countdown" hidden>
+  <div class="cd-label">准备</div>
+  <div class="cd-num" id="cdNum">4</div>
+  <div class="cd-sub">跟着点声熟悉速度　·　点这里取消</div>
+</div>
 
 <div class="sheet" id="sheet" hidden>
   <div class="sheet-panel">
@@ -181,5 +207,6 @@
 </div>
 
 <script src="js/metronome.js"></script>
+<script src="js/sync.js"></script>
 </body>
 </html>

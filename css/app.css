@@ -148,6 +148,20 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 .sync-box summary::before { content: '▸  '; color: var(--accent-2); }
 .sync-box[open] summary::before { content: '▾  '; }
 .sync-body { padding-bottom: 14px; }
+.sync-sep { height: 1px; background: var(--surface-2); margin: 14px 0; }
+.sync-row select { background: var(--surface-2); color: var(--text); border: none; border-radius: 10px; padding: 8px 12px; font-size: 14px; }
+.countdown {
+  position: fixed; inset: 0; z-index: 40; background: rgba(18, 19, 28, .93);
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; cursor: pointer;
+}
+.countdown[hidden] { display: none; }
+.cd-label { font-size: 18px; color: var(--dim); letter-spacing: 6px; }
+.cd-num { font-size: 168px; font-weight: 800; line-height: 1; color: var(--accent-2); font-variant-numeric: tabular-nums; }
+.cd-sub { font-size: 13px; color: var(--dim); margin-top: 8px; }
+@media (orientation: landscape) and (max-height: 500px) {
+  .cd-num { font-size: 110px; }
+  .cd-label { font-size: 15px; }
+}
 .sync-row { display: flex; justify-content: space-between; align-items: baseline; font-size: 13px; color: var(--dim); }
 .sync-row b { font-size: 18px; color: var(--text); font-variant-numeric: tabular-nums; }
 .sync-tip { font-size: 12px; color: var(--dim); line-height: 1.5; margin-top: 6px; }
@@ -233,3 +247,12 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
   background: linear-gradient(135deg, var(--accent), var(--accent-2)); color: #fff; font-size: 20px; font-weight: 600;
 }
 .play.running { background: var(--surface-2); }
+
+/* 云同步 */
+.sync-tip a { color: var(--accent-2); }
+.cloud-row { display: flex; gap: 8px; margin-top: 10px; }
+.cloud-row input { flex: 1; min-width: 0; background: var(--surface-2); color: var(--text); border: none; border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+.cloud-row button { height: 40px; padding: 0 14px; border-radius: 10px; background: var(--surface-2); color: var(--accent-2); font-size: 13px; white-space: nowrap; }
+.cloud-state { font-size: 14px !important; }
+.cloud-state[data-state="ok"] { color: #5ad18a !important; }
+.cloud-state[data-state="error"], .cloud-state[data-state="auth"] { color: #ff8a6a !important; }

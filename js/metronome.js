@@ -41,8 +41,14 @@
   }
 
   const clamp = (v, [lo, hi]) => Math.min(hi, Math.max(lo, Math.round(v)));
+  // 云同步：这些设置项各自记“最后修改时间”，跨设备时谁最后改的谁生效。
+  // 声画延迟校准（avOffset）、撤销历史（hist）是每台设备自己的，不同步。
+  const SYNC_KEYS = ['bpm', 'beats', 'subdiv', 'ticks', 'cells', 'mode', 'groove', 'gclick', 'pad', 'pclick',
+    'combo', 'ctab', 'cclick', 'rbars', 'rdiff', 'curMine', 'cdSec', 'dtext'];
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { /* ignore */ }
+  // 升级前就存在的旧数据没有时间戳：记成 1，比“全新设备(0)”新，但比任何新改动旧
+  const legacyStamps = Object.keys(saved).length > 0 && !saved.stamps;
   const s = {
     bpm: clamp(saved.bpm || 100, LIMITS.bpm),
     beats: clamp(saved.beats || 4, LIMITS.beats),
@@ -52,6 +58,7 @@
     combo: Array.isArray(saved.combo) ? saved.combo : null,
     ctab: ['long', 'six', 'trip', 'sync'].includes(saved.ctab) ? saved.ctab : 'six',
     cclick: saved.cclick !== false,
+    cdSec: [0, 3, 4, 6, 8].includes(saved.cdSec) ? saved.cdSec : 4,
     dtext: typeof saved.dtext === 'string' ? saved.dtext.slice(0, 2000) : '',
     avOffset: Number.isFinite(saved.avOffset) ? Math.max(-80, Math.min(500, Math.round(saved.avOffset))) : 0,
     mine: Array.isArray(saved.mine) ? saved.mine.filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string' && Array.isArray(m.seq)) : [],
@@ -63,12 +70,29 @@
     gclick: saved.gclick !== false,
     pad: typeof saved.pad === 'string' ? saved.pad : 'single8',
     pclick: saved.pclick !== false,
+    stamps: saved.stamps && typeof saved.stamps === 'object' && !Array.isArray(saved.stamps) ? saved.stamps
+      : (legacyStamps ? Object.fromEntries(SYNC_KEYS.map((k) => [k, 1])) : {}),
+    gone: Array.isArray(saved.gone) ? saved.gone.filter((g) => g && typeof g.id === 'string' && Number.isFinite(g.at)) : [],
     cells: []
   };
+  s.mine.forEach((m) => { if (!Number.isFinite(m.updated)) m.updated = 1; });
   const zeros = () => '0'.repeat(s.subdiv);
   const validCell = (x) => typeof x === 'string' && x.length === s.subdiv && /^[01]+$/.test(x);
   s.cells = Array.from({ length: s.beats }, (_, i) => (saved.cells && validCell(saved.cells[i]) ? saved.cells[i] : zeros()));
-  const save = () => { try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) { /* ignore */ } };
+  const snap = {};
+  SYNC_KEYS.forEach((k) => { snap[k] = JSON.stringify(s[k]); });
+  let applyingRemote = false;
+  const save = () => {
+    if (!applyingRemote) {
+      const now = Date.now();
+      SYNC_KEYS.forEach((k) => {
+        const j = JSON.stringify(s[k]);
+        if (j !== snap[k]) { snap[k] = j; s.stamps[k] = now; }
+      });
+    }
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) { /* ignore */ }
+    if (!applyingRemote && window.SyncBridge && window.SyncBridge.changed) window.SyncBridge.changed();
+  };
 
   let ctx = null, out = null, schedTimer = null, drainTimer = null;
   let playing = false, nextTime = 0, pos = { beat: 0, sub: 0 }, queue = [];
@@ -362,8 +386,37 @@
   // 高亮按"听到的时间"走：自动扣除设备报告的延迟，再加上用户手动校准的偏移
   function autoLatency() { return ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0; }
   function visualLag() { return autoLatency() + s.avOffset / 1000; }
+  // ---- 开始前倒计时：先按当前速度打几拍空拍“点”，最后 4 拍是 1 2 3 4，练习踩在拍点上开始 ----
+  let countStart = 0, countEnd = null, countSec = 0;
+  function startCountIn() {
+    countEnd = null;
+    if (!s.cdSec) return;
+    const beatSec = 60 / s.bpm;
+    const n = Math.max(4, Math.ceil(s.cdSec / beatSec - 1e-9));   // 至少 s.cdSec 秒，且总拍数取整
+    for (let i = 0; i < n; i++) tone(nextTime + i * beatSec, i === n - 4 ? 0 : 1, 0.85);   // 最后 4 拍的第 1 拍重音
+    countStart = nextTime;
+    countEnd = nextTime + n * beatSec;
+    countSec = s.cdSec;
+    nextTime = countEnd;                                            // 真正的练习从这里开始
+    $('cdNum').textContent = countSec;
+    $('countdown').hidden = false;
+  }
+  function endCountIn() {
+    countEnd = null;
+    $('countdown').hidden = true;
+  }
+  function updateCountdown(now) {
+    if (countEnd === null) return;
+    const remaining = countEnd - now;
+    if (remaining <= 0) { endCountIn(); return; }
+    const total = countEnd - countStart;
+    const n = Math.max(1, Math.min(countSec, Math.ceil((remaining / total) * countSec - 1e-9)));
+    if ($('cdNum').textContent !== String(n)) $('cdNum').textContent = n;
+  }
+
   function drain() {
     const now = ctx.currentTime - visualLag();
+    updateCountdown(now);
     let due = null;
     while (queue.length && queue[0].t <= now) due = queue.shift();
     if (!due) return;
@@ -406,6 +459,7 @@
     gstep = 0;
     queue = [];
     nextTime = ctx.currentTime + 0.08;
+    startCountIn();
     tick();
     schedTimer = setInterval(tick, 25);
     drainTimer = setInterval(drain, 15);
@@ -418,6 +472,7 @@
     clearInterval(drainTimer);
     if (out) { out.disconnect(); out = null; }   // silences sounds already scheduled ahead
     queue = [];
+    endCountIn();
     clearLit();
     lightGroove(-1);
     releaseWake();
@@ -1312,6 +1367,7 @@
     if (units % 48 !== 0) console.error('preset not whole bars', p.name, units);
   });
   s.combo = sanitizeCombo(s.combo && s.combo.length ? s.combo : COMBO_PRESETS[0].seq);
+  snap.combo = JSON.stringify(s.combo);   // 启动时补的默认谱不算“用户改动”，不要打时间戳
 
   // 横屏（宽度 ≥ 640）每行排 2 小节，竖屏 1 小节
   const wideMq = window.matchMedia('(min-width: 640px)');
@@ -1418,7 +1474,7 @@
     const def = `我的练习 ${s.mine.length + 1}`;
     const name = window.prompt('给这一页谱起个名字', def);
     if (name === null) return;
-    const m = { id: Date.now().toString(36), name: name.trim() || def, seq: clone(s.combo) };
+    const m = { id: Date.now().toString(36), name: name.trim() || def, seq: clone(s.combo), updated: Date.now() };
     s.mine.unshift(m);
     s.curMine = m.id;
     comboChanged();
@@ -1448,6 +1504,7 @@
     if (!m) { saveAs(); return; }
     if (!s.combo.length) { flash('内容是空的，没有保存'); return; }
     m.seq = clone(s.combo);
+    m.updated = Date.now();
     comboChanged();
     flash(`已保存「${m.name}」`);
   });
@@ -1464,6 +1521,7 @@
       const m = s.mine.find((x) => x.id === del.dataset.del);
       if (m && window.confirm(`删除「${m.name}」吗？`)) {
         s.mine = s.mine.filter((x) => x.id !== m.id);
+        s.gone = s.gone.filter((g) => g.id !== m.id).concat([{ id: m.id, at: Date.now() }]);   // 删除记号：让别的设备也删掉
         if (s.curMine === m.id) s.curMine = null;
         comboChanged();
       }
@@ -1558,7 +1616,7 @@
     list.forEach(({ name, seq }) => {
       if (s.mine.some((m) => m.name === name && JSON.stringify(m.seq) === JSON.stringify(seq))) { skipped++; return; }
       const nm = s.mine.some((m) => m.name === name) ? `${name}（导入）` : name;
-      s.mine.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: nm, seq: clone(seq) });
+      s.mine.unshift({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: nm, seq: clone(seq), updated: Date.now() });
       added++;
     });
     if (added) comboChanged();
@@ -1796,6 +1854,9 @@
     $('avTip').textContent = (ctx ? `设备报告的输出延迟 ${auto} ms，已自动补偿。` : '开始播放后会显示设备报告的输出延迟，并自动补偿。') +
       '如果高亮比声音早，把数值调大；比声音晚，调小。';
   }
+  $('cdSec').value = String(s.cdSec);
+  $('cdSec').addEventListener('change', (e) => { s.cdSec = Number(e.target.value); save(); });
+  $('countdown').addEventListener('click', () => { if (playing) stop(); });
   $('avSlider').addEventListener('input', (e) => { s.avOffset = Number(e.target.value); save(); renderAv(); });
   $('syncBox').addEventListener('toggle', renderAv);
 
@@ -1803,6 +1864,55 @@
   renderPlay();
   applyMode();
   renderAv();
+
+  // ---------- 云同步桥：给 js/sync.js 用 ----------
+  // export 只交出可同步的内容；apply 收到合并结果后逐项校验再采用，坏数据不会进来
+  const bool = (v, d) => (typeof v === 'boolean' ? v : d);
+  const oneOf = (v, list, d) => (list.includes(v) ? v : d);
+  window.SyncBridge = {
+    changed() {},
+    isPlaying: () => playing,
+    export() {
+      const v = {};
+      SYNC_KEYS.forEach((k) => { v[k] = s[k]; });
+      return { v: clone(v), at: Object.assign({}, s.stamps), mine: clone(s.mine), gone: clone(s.gone) };
+    },
+    apply(m) {
+      if (playing) return false;
+      applyingRemote = true;
+      const comboBefore = JSON.stringify(s.combo);
+      try {
+        const v = m.v || {};
+        s.beats = clamp(v.beats || s.beats, LIMITS.beats);
+        s.subdiv = clamp(v.subdiv || s.subdiv, LIMITS.subdiv);
+        s.cells = Array.from({ length: s.beats }, (_, i) => (v.cells && validCell(v.cells[i]) ? v.cells[i] : zeros()));
+        s.bpm = clamp(v.bpm || s.bpm, LIMITS.bpm);
+        s.ticks = bool(v.ticks, s.ticks); s.gclick = bool(v.gclick, s.gclick);
+        s.pclick = bool(v.pclick, s.pclick); s.cclick = bool(v.cclick, s.cclick);
+        s.mode = oneOf(v.mode, ['metro', 'groove', 'pad', 'combo'], s.mode);
+        s.ctab = oneOf(v.ctab, ['long', 'six', 'trip', 'sync'], s.ctab);
+        s.cdSec = oneOf(v.cdSec, [0, 3, 4, 6, 8], s.cdSec);
+        s.rbars = oneOf(v.rbars, [2, 4, 6, 8], s.rbars);
+        s.rdiff = oneOf(v.rdiff, ['basic', 'adv', 'trip'], s.rdiff);
+        if (typeof v.groove === 'string') s.groove = v.groove;
+        if (typeof v.pad === 'string') s.pad = v.pad;
+        if (typeof v.dtext === 'string') s.dtext = v.dtext.slice(0, 2000);
+        if (Array.isArray(v.combo) && v.combo.length) s.combo = sanitizeCombo(v.combo);
+        s.mine = (m.mine || []).filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string' && Array.isArray(x.seq))
+          .map((x) => ({ id: x.id, name: x.name.slice(0, 80), seq: sanitizeCombo(x.seq), updated: Number.isFinite(x.updated) ? x.updated : 1 }));
+        s.gone = (m.gone || []).filter((g) => g && typeof g.id === 'string' && Number.isFinite(g.at));
+        s.curMine = typeof v.curMine === 'string' && s.mine.some((x) => x.id === v.curMine) ? v.curMine : null;
+        s.stamps = Object.assign({}, m.at || {});
+        SYNC_KEYS.forEach((k) => { snap[k] = JSON.stringify(s[k]); });
+        if (JSON.stringify(s.combo) !== comboBefore) s.hist = [];      // 谱子被换掉了，旧的撤销历史作废
+        save();
+      } finally { applyingRemote = false; }
+      $('cdSec').value = String(s.cdSec);
+      renderAll(); renderPlay(); applyMode();
+      if (!$('score').hidden) renderScore();
+      return true;
+    }
+  };
 
   if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(() => {}));
