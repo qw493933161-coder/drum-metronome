@@ -17,7 +17,7 @@
 
   function merge(L, R, now = Date.now()) {
     const v = {}, at = {}, done = new Set();
-    const keys = [...new Set([...Object.keys(L.v || {}), ...Object.keys(R.v || {})])];
+    const keys = Object.keys(L.v || {});      // 以本机认识的项为准，云端多出来的旧项直接丢弃
     keys.forEach((k) => {
       if (done.has(k)) return;
       const group = GROUPS.find((g) => g.includes(k)) || [k];

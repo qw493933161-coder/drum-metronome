@@ -256,3 +256,22 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 .cloud-state { font-size: 14px !important; }
 .cloud-state[data-state="ok"] { color: #5ad18a !important; }
 .cloud-state[data-state="error"], .cloud-state[data-state="auth"] { color: #ff8a6a !important; }
+
+/* 曲谱页 */
+.seg button { padding: 0 2px; }
+@media (max-width: 420px) { .seg button { font-size: 13.5px; } }
+.file-btn { display: block; text-align: center; line-height: 46px; cursor: pointer; }
+.song-ctl { display: flex; flex-direction: column; gap: 10px; }
+.song-ctl select { background: var(--surface-2); color: var(--text); border: none; border-radius: 10px; padding: 8px 12px; font-size: 14px; }
+.song-scale { display: inline-flex; align-items: center; gap: 10px; }
+.song-scale button { width: 36px; height: 34px; border-radius: 10px; background: var(--surface-2); color: var(--text); font-size: 18px; }
+.song-scale b { font-size: 15px; min-width: 44px; text-align: center; color: var(--text); }
+.song-checks { display: flex; flex-wrap: wrap; gap: 8px 18px; }
+.song-paper { position: relative; background: #fff; border-radius: 14px; margin-top: 12px; height: 62vh; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 6px; }
+.song-paper.busy::after { content: '正在排谱…'; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,.85); color: #555; font-size: 15px; }
+#songHost { color: #111; }
+.at-cursor-bar { background: rgba(255, 107, 74, 0.14); }
+.at-cursor-beat { background: #ff6b4a; width: 3px; }
+.at-selection div { background: rgba(255, 107, 74, 0.12); }
+.at-highlight * { fill: #e8481f; stroke: #e8481f; }
+@media (orientation: landscape) and (max-height: 500px) { .song-paper { height: 78vh; } }

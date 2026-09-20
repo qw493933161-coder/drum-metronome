@@ -17,9 +17,10 @@
     <button data-mode="groove">基础节奏</button>
     <button data-mode="pad">鼓垫练习</button>
     <button data-mode="combo">变速练习</button>
+    <button data-mode="song">曲谱</button>
   </div>
 
-  <section class="bpm">
+  <section class="bpm" id="bpmBox">
     <div class="bpm-num" id="bpm">100</div>
     <div class="bpm-unit">BPM</div>
     <input type="range" id="bpmSlider" min="20" max="300" value="100" aria-label="速度">
@@ -136,6 +137,32 @@
     <section class="g-list" id="cPresets"></section>
   </div>
 
+  <div class="view" id="viewSong" hidden>
+    <section class="groove-card song-card">
+      <div class="groove-title" id="songTitle">曲谱</div>
+      <div class="groove-desc" id="songDesc">打开 Guitar Pro（.gp5 等）或 MusicXML 谱文件，播放时谱面会跟着高亮。谱只保存在这台设备上。</div>
+      <label class="btn-score file-btn">选择谱文件<input type="file" id="songFile" hidden></label>
+      <div class="c-status" id="songMsg"></div>
+    </section>
+    <div id="songBody" hidden>
+      <section class="pattern song-ctl">
+        <div class="sync-row"><span>播放速度</span><select id="songSpeed" aria-label="播放速度"></select></div>
+        <div class="sync-row" id="songTrackRow" hidden><span>显示的声部</span><select id="songTrack" aria-label="显示的声部"></select></div>
+        <div class="sync-row"><span>谱面大小</span><span class="song-scale"><button data-sscale="-0.1" aria-label="缩小">−</button><b id="songScaleVal">100%</b><button data-sscale="0.1" aria-label="放大">+</button></span></div>
+        <div class="song-checks">
+          <label class="check"><input type="checkbox" id="songLoop"><span>循环</span></label>
+          <label class="check"><input type="checkbox" id="songClick"><span>节拍点击</span></label>
+          <label class="check"><input type="checkbox" id="songDrums"><span>鼓声</span></label>
+          <label class="check"><input type="checkbox" id="songBand"><span>伴奏</span></label>
+        </div>
+        <div class="sync-tip">想自己打鼓：关掉“鼓声”，只听伴奏。点谱面某一处可从那里开始；拖选一段再开“循环”可反复练。</div>
+      </section>
+      <div class="song-paper" id="songScroll"><div id="songHost"></div></div>
+    </div>
+    <div class="pattern-title c-presets-title">这台设备上的谱</div>
+    <section class="g-list" id="songList"></section>
+  </div>
+
   <details class="sync-box" id="syncBox">
     <summary>设置（倒计时、声画同步、云同步）</summary>
     <div class="sync-body">
@@ -208,5 +235,6 @@
 
 <script src="js/metronome.js"></script>
 <script src="js/sync.js"></script>
+<script src="js/song.js"></script>
 </body>
 </html>

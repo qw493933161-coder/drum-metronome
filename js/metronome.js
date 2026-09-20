@@ -43,7 +43,7 @@
   const clamp = (v, [lo, hi]) => Math.min(hi, Math.max(lo, Math.round(v)));
   // 云同步：这些设置项各自记“最后修改时间”，跨设备时谁最后改的谁生效。
   // 声画延迟校准（avOffset）、撤销历史（hist）是每台设备自己的，不同步。
-  const SYNC_KEYS = ['bpm', 'beats', 'subdiv', 'ticks', 'cells', 'mode', 'groove', 'gclick', 'pad', 'pclick',
+  const SYNC_KEYS = ['bpm', 'beats', 'subdiv', 'ticks', 'cells', 'groove', 'gclick', 'pad', 'pclick',
     'combo', 'ctab', 'cclick', 'rbars', 'rdiff', 'curMine', 'cdSec', 'dtext'];
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { /* ignore */ }
@@ -54,7 +54,7 @@
     beats: clamp(saved.beats || 4, LIMITS.beats),
     subdiv: clamp(saved.subdiv || 1, LIMITS.subdiv),
     ticks: saved.ticks !== false,
-    mode: ['groove', 'pad', 'combo'].includes(saved.mode) ? saved.mode : 'metro',
+    mode: ['groove', 'pad', 'combo', 'song'].includes(saved.mode) ? saved.mode : 'metro',
     combo: Array.isArray(saved.combo) ? saved.combo : null,
     ctab: ['long', 'six', 'trip', 'sync'].includes(saved.ctab) ? saved.ctab : 'six',
     cclick: saved.cclick !== false,
@@ -725,7 +725,10 @@
     }
   });
 
-  $('play').addEventListener('click', () => (playing ? stop() : start()));
+  $('play').addEventListener('click', () => {
+    if (s.mode === 'song') { if (window.SongUI) window.SongUI.toggle(); return; }
+    if (playing) stop(); else start();
+  });
 
   // ---------- 基础节奏界面 ----------
   const LANES = [['踩镲', 'hh'], ['军鼓', 'sn'], ['底鼓', 'bd']];
@@ -789,6 +792,9 @@
     $('viewGroove').hidden = s.mode !== 'groove';
     $('viewPad').hidden = s.mode !== 'pad';
     $('viewCombo').hidden = s.mode !== 'combo';
+    $('viewSong').hidden = s.mode !== 'song';
+    $('bpmBox').hidden = s.mode === 'song';
+    if (window.SongUI) { if (s.mode === 'song') window.SongUI.enter(); else window.SongUI.leave(); }
     document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === s.mode));
     if (s.mode === 'groove') { renderGroove(); renderGrooveList(); }
     if (s.mode === 'pad') { renderPad(); renderPadList(); }
@@ -1869,6 +1875,7 @@
   // export 只交出可同步的内容；apply 收到合并结果后逐项校验再采用，坏数据不会进来
   const bool = (v, d) => (typeof v === 'boolean' ? v : d);
   const oneOf = (v, list, d) => (list.includes(v) ? v : d);
+  window.SongBridge = { mode: () => s.mode, countIn: () => s.cdSec > 0 };
   window.SyncBridge = {
     changed() {},
     isPlaying: () => playing,
@@ -1889,7 +1896,6 @@
         s.bpm = clamp(v.bpm || s.bpm, LIMITS.bpm);
         s.ticks = bool(v.ticks, s.ticks); s.gclick = bool(v.gclick, s.gclick);
         s.pclick = bool(v.pclick, s.pclick); s.cclick = bool(v.cclick, s.cclick);
-        s.mode = oneOf(v.mode, ['metro', 'groove', 'pad', 'combo'], s.mode);
         s.ctab = oneOf(v.ctab, ['long', 'six', 'trip', 'sync'], s.ctab);
         s.cdSec = oneOf(v.cdSec, [0, 3, 4, 6, 8], s.cdSec);
         s.rbars = oneOf(v.rbars, [2, 4, 6, 8], s.rbars);
