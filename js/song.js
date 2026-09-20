@@ -58,7 +58,12 @@
     if (api) return;
     api = new window.alphaTab.AlphaTabApi($('songHost'), {
       core: { scriptFile: BASE + 'alphaTab.min.js', fontDirectory: BASE + 'font/', useWorkers: true },
-      display: { layoutMode: window.alphaTab.LayoutMode.Page, scale: pref.scale },
+      display: {
+        layoutMode: window.alphaTab.LayoutMode.Page,
+        scale: pref.scale,
+        // 第二声部（比如底鼓）默认画成浅灰，和印刷的鼓谱不一样；这里改成黑色，小节号也调淡
+        resources: { secondaryGlyphColor: 'rgb(0,0,0)', barNumberColor: 'rgb(90,90,90)', staffLineColor: 'rgb(110,110,110)' }
+      },
       player: { enablePlayer: true, soundFont: BASE + 'soundfont/sonivox.sf2', scrollElement: $('songScroll'), enableCursor: true }
     });
     api.scoreLoaded.on((sc) => { score = sc; onScore(); });
