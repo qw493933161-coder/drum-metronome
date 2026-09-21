@@ -561,6 +561,7 @@
     releaseWake();
     KeepAlive.off();
     renderPlay();
+    if (window.AppUpdate) setTimeout(window.AppUpdate.tryReload, 300);
   }
 
   async function acquireWake() {
@@ -2062,7 +2063,34 @@
     }
   };
 
+  // 应用更新：新版本的服务进程接管后自动刷新一次；正在播放就等停下再刷，不打断练习
+  const AppUpdate = { pending: false };
+  const busyPlaying = () => playing || !!(window.SongUI && window.SongUI.playing && window.SongUI.playing());
+  AppUpdate.tryReload = () => { if (AppUpdate.pending && !busyPlaying()) location.reload(); };
+  window.AppUpdate = AppUpdate;
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').catch(() => {}));
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || AppUpdate.pending) return;     // 第一次安装不用刷新
+      AppUpdate.pending = true;
+      AppUpdate.tryReload();
+    });
+    window.addEventListener('load', () => navigator.serviceWorker.register('service-worker.js').then((reg) => {
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) reg.update().catch(() => {}); });
+      setInterval(() => reg.update().catch(() => {}), 30 * 60 * 1000);
+    }).catch(() => {}));
   }
+  // 设置里的“更新到最新版”：只清程序缓存，不动你保存的谱和设置
+  const forceBtn = $('forceUpdate');
+  if (forceBtn) forceBtn.addEventListener('click', async () => {
+    forceBtn.disabled = true;
+    forceBtn.textContent = '更新中…';
+    try {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    } catch (e) { /* ignore */ }
+    location.reload();
+  });
 })();

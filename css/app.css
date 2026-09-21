@@ -300,3 +300,4 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 .gapbar span { font-size: 15px; font-weight: 600; }
 .gapbar b { font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums; }
 @media (orientation: landscape) and (max-height: 500px) { .gapbar { padding: 4px 16px; } .gapbar b { font-size: 30px; } }
+.cloud-btn { height: 34px; padding: 0 12px; border-radius: 10px; background: var(--surface-2); color: var(--accent-2); font-size: 13px; white-space: nowrap; }

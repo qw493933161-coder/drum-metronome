@@ -69,7 +69,7 @@
     api.scoreLoaded.on((sc) => { score = sc; onScore(); });
     api.renderFinished.on(() => { $('songScroll').classList.remove('busy'); });
     api.playerReady.on(() => { readyPlay = true; applyPlayerPrefs(); say(''); refreshPlay(); });
-    api.playerStateChanged.on((e) => { playingNow = e.state === 1; if (!playingNow && window.KeepAlive) window.KeepAlive.off(); refreshPlay(); });
+    api.playerStateChanged.on((e) => { playingNow = e.state === 1; if (!playingNow && window.KeepAlive) window.KeepAlive.off(); if (!playingNow && window.AppUpdate) setTimeout(window.AppUpdate.tryReload, 300); refreshPlay(); });
     api.error.on((e) => { say('打开失败：这个文件可能不是有效的乐谱，或格式暂不支持'); void e; $('songScroll').classList.remove('busy'); });
     readyPlay = false;
   }
@@ -331,6 +331,7 @@
       refreshPlay();
     },
     leave() { stop(); },
+    playing: () => playingNow,
     async toggle() {
       if (!api || !score) { say('先选一份谱文件'); return; }
       if (!readyPlay) { say('音色还在加载，稍等几秒'); return; }
