@@ -114,6 +114,10 @@
         <button class="btn-score" id="rGo">随机出一页</button>
       </div>
       <label class="check g-click"><input type="checkbox" id="cClick"><span>节拍参考音</span></label>
+      <div class="sync-row gap-row">
+        <span>每遍打完，下一遍前的预备拍</span>
+        <select id="gapBeats" aria-label="每遍之间的预备拍"><option value="0">关闭</option><option value="2">2 拍</option><option value="4">4 拍</option></select>
+      </div>
     </section>
     <section class="pattern digit-box">
       <div class="pattern-title">数字记谱</div>
@@ -148,6 +152,7 @@
       <section class="pattern song-ctl">
         <div class="sync-row"><span>播放速度</span><select id="songSpeed" aria-label="播放速度"></select></div>
         <div class="sync-row" id="songTrackRow" hidden><span>显示的声部</span><select id="songTrack" aria-label="显示的声部"></select></div>
+        <div class="sync-row"><span>屏幕方向</span><button class="song-rot" id="songRot" aria-label="切换横屏">⟳ 横屏</button></div>
         <div class="sync-row"><span>谱面大小</span><span class="song-scale"><button data-sscale="-0.1" aria-label="缩小">−</button><b id="songScaleVal">100%</b><button data-sscale="0.1" aria-label="放大">+</button></span></div>
         <div class="song-checks">
           <label class="check"><input type="checkbox" id="songLoop"><span>循环</span></label>
@@ -202,6 +207,8 @@
   </div>
 </div>
 
+<div class="gapbar" id="gapBar" hidden aria-live="polite"><span id="gapLabel">预备</span><b id="gapNum">1</b></div>
+
 <div class="countdown" id="countdown" hidden>
   <div class="cd-label">准备</div>
   <div class="cd-num" id="cdNum">4</div>
@@ -222,6 +229,7 @@
       <div class="score-title" id="scoreTitle"></div>
       <div class="score-sub" id="scoreSub"></div>
     </div>
+    <button class="score-rot" id="scoreRot" aria-label="切换横屏">⟳ 横屏</button>
   </div>
   <div class="score-body">
     <div id="scoreSvgHost"></div>

@@ -9,6 +9,7 @@
       input.hidden = !(opts && opts.input);
       input.value = (opts && opts.def) || '';
       $('dlgYes').textContent = (opts && opts.yes) || '确定';
+      $('dlgNo').hidden = !!(opts && opts.alertOnly);
       box.hidden = false;
       if (!input.hidden) { input.focus(); input.select(); } else $('dlgYes').focus();
       const done = (ok) => {
@@ -26,6 +27,7 @@
     });
   }
   window.AppDialog = {
+    alert: (msg) => appDialog(msg, { yes: '知道了', alertOnly: true }),
     confirm: (msg, yes) => appDialog(msg, { yes }),
     prompt: (msg, def) => appDialog(msg, { input: true, def })
   };
@@ -73,7 +75,7 @@
   // 云同步：这些设置项各自记“最后修改时间”，跨设备时谁最后改的谁生效。
   // 声画延迟校准（avOffset）、撤销历史（hist）是每台设备自己的，不同步。
   const SYNC_KEYS = ['bpm', 'beats', 'subdiv', 'ticks', 'cells', 'groove', 'gclick', 'pad', 'pclick',
-    'combo', 'ctab', 'cclick', 'rbars', 'rdiff', 'curMine', 'cdSec', 'dtext'];
+    'combo', 'ctab', 'cclick', 'rbars', 'rdiff', 'curMine', 'cdSec', 'dtext', 'gap'];
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { /* ignore */ }
   // 升级前就存在的旧数据没有时间戳：记成 1，比“全新设备(0)”新，但比任何新改动旧
@@ -88,6 +90,7 @@
     ctab: ['long', 'six', 'trip', 'sync'].includes(saved.ctab) ? saved.ctab : 'six',
     cclick: saved.cclick !== false,
     cdSec: [0, 3, 4, 6, 8].includes(saved.cdSec) ? saved.cdSec : 4,
+    gap: [0, 2, 4].includes(saved.gap) ? saved.gap : 4,
     dtext: typeof saved.dtext === 'string' ? saved.dtext.slice(0, 2000) : '',
     avOffset: Number.isFinite(saved.avOffset) ? Math.max(-80, Math.min(500, Math.round(saved.avOffset))) : 0,
     mine: Array.isArray(saved.mine) ? saved.mine.filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string' && Array.isArray(m.seq)) : [],
@@ -147,8 +150,11 @@
     osc.stop(time + c.dur + 0.02);
   }
 
+  // 前台 0.12 秒；后台时定时器会被系统降速，多排几秒，靠音频时钟继续准点出声
+  const lookahead = () => (document.hidden ? 4 : 0.12);
+
   function schedule() {
-    const horizon = ctx.currentTime + 0.12;
+    const horizon = ctx.currentTime + lookahead();
     while (nextTime < horizon) {
       if (pos.beat >= s.beats) pos.beat = 0;
       if (pos.sub >= s.subdiv) pos.sub = 0;
@@ -264,7 +270,7 @@
   function scheduleGroove() {
     const g = GROOVES.find((x) => x.id === s.groove) || GROOVES[0];
     const total = g.beats * g.spb;
-    const horizon = ctx.currentTime + 0.12;
+    const horizon = ctx.currentTime + lookahead();
     while (nextTime < horizon) {
       if (gstep >= total) gstep = 0;
       const t = nextTime;
@@ -389,7 +395,7 @@
   function schedulePad() {
     const ex = PADS.find((x) => x.id === s.pad) || PADS[0];
     const total = ex.beats * ex.spb;
-    const horizon = ctx.currentTime + 0.12;
+    const horizon = ctx.currentTime + lookahead();
     while (nextTime < horizon) {
       if (gstep >= total) gstep = 0;
       const hit = ex.hits[gstep];
@@ -404,6 +410,7 @@
   function lightGroove(step) { moveScoreCursor(step); }
 
   const tick = () => {
+    if (playing && ctx && nextTime < ctx.currentTime - 0.25) nextTime = ctx.currentTime + 0.05;   // 被挂起后恢复：重新对齐，避免一口气补播
     if (s.mode === 'groove') scheduleGroove();
     else if (s.mode === 'pad') schedulePad();
     else if (s.mode === 'combo') scheduleCombo();
@@ -449,7 +456,8 @@
     let due = null;
     while (queue.length && queue[0].t <= now) due = queue.shift();
     if (!due) return;
-    if (due.groove) lightGroove(due.step);
+    if (due.gap) { showGap(due.gap); return; }
+    if (due.groove) { hideGap(); lightGroove(due.step); }
     else light(due.beat, due.sub);
   }
 
@@ -468,12 +476,57 @@
     lit = { beat, sub };
   }
 
+  // ---------- 后台播放：循环播放一段静音 <audio>，让系统把本页当作“正在播放音频”，
+  // 切到别的 App 或锁屏后声音不被掐断；同时在锁屏/通知栏显示播放控制 ----------
+  const silentWavUrl = () => {
+    const rate = 8000, n = rate;
+    const buf = new ArrayBuffer(44 + n), v = new DataView(buf);
+    const w = (o, t) => { for (let i = 0; i < t.length; i++) v.setUint8(o + i, t.charCodeAt(i)); };
+    w(0, 'RIFF'); v.setUint32(4, 36 + n, true); w(8, 'WAVE'); w(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate, true); v.setUint16(32, 1, true); v.setUint16(34, 8, true);
+    w(36, 'data'); v.setUint32(40, n, true);
+    new Uint8Array(buf, 44).fill(128);
+    return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+  };
+  const KeepAlive = {
+    el: null,
+    active: false,
+    on(title) {
+      this.active = true;
+      try {
+        if (!this.el) { this.el = new Audio(silentWavUrl()); this.el.loop = true; this.el.setAttribute('playsinline', ''); }
+        const p = this.el.play();
+        if (p && p.catch) p.catch(() => {});
+        if (navigator.audioSession) navigator.audioSession.type = 'playback';
+        if ('mediaSession' in navigator && window.MediaMetadata) {
+          navigator.mediaSession.metadata = new MediaMetadata({ title: title || '鼓手节拍器', artist: '鼓手节拍器' });
+          navigator.mediaSession.playbackState = 'playing';
+          const go = (want) => () => { if (this.active === want) $('play').click(); };
+          try { navigator.mediaSession.setActionHandler('pause', go(true)); } catch (e) { /* ignore */ }
+          try { navigator.mediaSession.setActionHandler('stop', go(true)); } catch (e) { /* ignore */ }
+          try { navigator.mediaSession.setActionHandler('play', go(false)); } catch (e) { /* ignore */ }
+        }
+      } catch (e) { /* ignore */ }
+    },
+    off() {
+      this.active = false;
+      try {
+        if (this.el) this.el.pause();
+        if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+      } catch (e) { /* ignore */ }
+    }
+  };
+  window.KeepAlive = KeepAlive;
+  const MODE_TITLE = { metro: '节拍器', groove: '基础节奏', pad: '鼓垫练习', combo: '变速练习' };
+
   // ---------- transport ----------
   async function start() {
     if (s.mode === 'combo' && !s.combo.length) {
       $('cHint').textContent = '先从下面选几个时值放进来，再点开始';
       return;
     }
+    KeepAlive.on(`${MODE_TITLE[s.mode] || '节拍器'} · ${s.bpm} BPM`);   // 必须在点击的同一时刻启动，否则手机浏览器不放行
     if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
     await ctx.resume();
     if (!noiseBuf) {
@@ -502,9 +555,11 @@
     if (out) { out.disconnect(); out = null; }   // silences sounds already scheduled ahead
     queue = [];
     endCountIn();
+    hideGap();
     clearLit();
     lightGroove(-1);
     releaseWake();
+    KeepAlive.off();
     renderPlay();
   }
 
@@ -515,7 +570,10 @@
     if (wake) { wake.release().catch(() => {}); wake = null; }
   }
   document.addEventListener('visibilitychange', () => {
-    if (playing && document.visibilityState === 'visible' && !wake) acquireWake();
+    if (!playing) return;
+    if (document.visibilityState === 'visible' && !wake) acquireWake();
+    if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});   // 被系统挂起过就叫醒
+    tick();                                                              // 切前后台时立刻按新的前瞻长度补排
   });
 
   // ---------- render ----------
@@ -824,6 +882,7 @@
     $('viewSong').hidden = s.mode !== 'song';
     $('bpmBox').hidden = s.mode === 'song';
     if (window.SongUI) { if (s.mode === 'song') window.SongUI.enter(); else window.SongUI.leave(); }
+    if (s.mode !== 'song' && window.AppOrient && $('score').hidden) window.AppOrient.release();
     document.querySelectorAll('#seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === s.mode));
     if (s.mode === 'groove') { renderGroove(); renderGrooveList(); }
     if (s.mode === 'pad') { renderPad(); renderPadList(); }
@@ -1305,11 +1364,30 @@
     comboCache = { hits, total: Math.max(1, L.rows.length) * BAR };
     return comboCache;
   }
+  // 每遍之间的预备拍：按当前速度“嘟(重)、嗒、嗒、嗒”，同时在屏幕上方显示 1 2 3 4
+  function scheduleGap() {
+    const beatSec = 60 / s.bpm;
+    for (let i = 0; i < s.gap; i++) {
+      const t = nextTime + i * beatSec;
+      tone(t, i === 0 ? 0 : 1, 0.85);
+      queue.push({ t, gap: i + 1, of: s.gap });
+    }
+    nextTime += s.gap * beatSec;
+  }
+  function showGap(n) {
+    const bar = $('gapBar');
+    bar.hidden = false;
+    $('gapNum').textContent = n;
+  }
+  function hideGap() { const b = $('gapBar'); if (b && !b.hidden) b.hidden = true; }
   function scheduleCombo() {
     const c = comboCache || comboTimeline();
-    const horizon = ctx.currentTime + 0.12;
+    const horizon = ctx.currentTime + lookahead();
     while (nextTime < horizon) {
-      if (gstep >= c.total) gstep = 0;
+      if (gstep >= c.total) {
+        gstep = 0;
+        if (s.gap > 0) { scheduleGap(); continue; }      // 一遍打完：先给几拍预备，再接下一遍
+      }
       if (c.hits.has(gstep)) snare(nextTime, 0.9);
       if (s.cclick && gstep % 12 === 0) tone(nextTime, gstep % BAR === 0 ? 0 : 1, 0.45);
       queue.push({ t: nextTime, groove: true, step: gstep });
@@ -1876,7 +1954,7 @@
   else wideMq.addListener(onWideChange);
   window.addEventListener('resize', onWideChange);
   window.addEventListener('orientationchange', onWideChange);
-  $('scoreClose').addEventListener('click', () => { $('score').hidden = true; });
+  $('scoreClose').addEventListener('click', () => { $('score').hidden = true; if (s.mode !== 'song' && window.AppOrient) window.AppOrient.release(); });
   $('scorePlay').addEventListener('click', () => (playing ? stop() : start()));
   document.querySelectorAll('[data-sbpm]').forEach((btn) =>
     btn.addEventListener('click', () => setBpm(s.bpm + Number(btn.dataset.sbpm))));
@@ -1891,6 +1969,8 @@
   }
   $('cdSec').value = String(s.cdSec);
   $('cdSec').addEventListener('change', (e) => { s.cdSec = Number(e.target.value); save(); });
+  $('gapBeats').value = String(s.gap);
+  $('gapBeats').addEventListener('change', (e) => { s.gap = Number(e.target.value); save(); });
   $('countdown').addEventListener('click', () => { if (playing) stop(); });
   $('avSlider').addEventListener('input', (e) => { s.avOffset = Number(e.target.value); save(); renderAv(); });
   $('syncBox').addEventListener('toggle', renderAv);
@@ -1899,6 +1979,37 @@
   renderPlay();
   applyMode();
   renderAv();
+
+  // ---------- 横屏切换：进入全屏并锁定横向；再点一次退回竖屏 ----------
+  // Android Chrome 允许在全屏下锁定方向；iOS Safari 不支持，只能提示用系统的“自动旋转”
+  let landscape = false;
+  function renderRot() {
+    ['scoreRot', 'songRot'].forEach((id) => { const b = $(id); if (b) b.textContent = landscape ? '↺ 竖屏' : '⟳ 横屏'; });
+  }
+  function releaseLandscape() {
+    if (!landscape) return;
+    landscape = false;
+    try { if (screen.orientation && screen.orientation.unlock) screen.orientation.unlock(); } catch (e) { /* ignore */ }
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e) { /* ignore */ }
+    renderRot();
+  }
+  async function toggleLandscape() {
+    if (landscape) { releaseLandscape(); return; }
+    const so = screen.orientation;
+    try {
+      if (!so || !so.lock) throw new Error('unsupported');
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen().catch(() => {});
+      await so.lock('landscape');
+      landscape = true;
+    } catch (e) {
+      try { if (document.fullscreenElement) document.exitFullscreen(); } catch (e2) { /* ignore */ }
+      window.AppDialog.alert('这个浏览器不让网页直接切到横屏。请打开手机的“自动旋转”，再把手机横过来就行；如果已经把 App 装到了主屏幕，需要更新后重新打开一次才能旋转。');
+    }
+    renderRot();
+  }
+  document.addEventListener('fullscreenchange', () => { if (landscape && !document.fullscreenElement) releaseLandscape(); });
+  ['scoreRot', 'songRot'].forEach((id) => { const b = $(id); if (b) b.addEventListener('click', toggleLandscape); });
+  window.AppOrient = { release: releaseLandscape };
 
   // ---------- 云同步桥：给 js/sync.js 用 ----------
   // export 只交出可同步的内容；apply 收到合并结果后逐项校验再采用，坏数据不会进来
@@ -1927,6 +2038,7 @@
         s.pclick = bool(v.pclick, s.pclick); s.cclick = bool(v.cclick, s.cclick);
         s.ctab = oneOf(v.ctab, ['long', 'six', 'trip', 'sync'], s.ctab);
         s.cdSec = oneOf(v.cdSec, [0, 3, 4, 6, 8], s.cdSec);
+        s.gap = oneOf(v.gap, [0, 2, 4], s.gap);
         s.rbars = oneOf(v.rbars, [2, 4, 6, 8], s.rbars);
         s.rdiff = oneOf(v.rdiff, ['basic', 'adv', 'trip'], s.rdiff);
         if (typeof v.groove === 'string') s.groove = v.groove;
@@ -1943,6 +2055,7 @@
         save();
       } finally { applyingRemote = false; }
       $('cdSec').value = String(s.cdSec);
+      $('gapBeats').value = String(s.gap);
       renderAll(); renderPlay(); applyMode();
       if (!$('score').hidden) renderScore();
       return true;

@@ -287,3 +287,16 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 .dlg-btns { display: flex; gap: 10px; }
 .dlg-btns button { flex: 1; height: 44px; border-radius: 12px; background: var(--surface-2); color: var(--text); font-size: 15px; }
 .dlg-btns button.ok { background: var(--accent); color: #fff; font-weight: 600; }
+
+/* 横屏切换按钮 */
+.score-rot, .song-rot { height: 36px; padding: 0 12px; border-radius: 10px; background: var(--surface-2); color: var(--accent-2); font-size: 13px; white-space: nowrap; }
+.score-rot { margin-left: auto; flex-shrink: 0; }
+
+/* 变速练习：每遍之间的预备拍提示（不挡住谱面，浮在顶部） */
+.gap-row { margin-top: 12px; align-items: center; }
+.gap-row select { background: var(--surface-2); color: var(--text); border: none; border-radius: 10px; padding: 8px 12px; font-size: 14px; }
+.gapbar { position: fixed; z-index: 55; top: max(10px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); display: flex; align-items: baseline; gap: 12px; padding: 8px 22px; border-radius: 18px; background: rgba(255, 107, 74, 0.95); color: #fff; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); pointer-events: none; white-space: nowrap; }
+.gapbar[hidden] { display: none; }
+.gapbar span { font-size: 15px; font-weight: 600; }
+.gapbar b { font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums; }
+@media (orientation: landscape) and (max-height: 500px) { .gapbar { padding: 4px 16px; } .gapbar b { font-size: 30px; } }
