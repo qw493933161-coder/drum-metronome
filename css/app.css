@@ -47,7 +47,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
   background: var(--surface); border-radius: 16px; padding: 16px 12px;
 }
 .beat { display: flex; flex-direction: column; align-items: center; gap: 8px; min-width: 0; }
-.beat-block { width: 100%; max-width: 64px; height: 48px; border-radius: 10px; background: var(--surface-2); transition: background .05s; }
+.beat-block { width: 100%; max-width: 64px; height: 48px; border-radius: 10px; background: var(--surface-2); }
 .beat:first-child .beat-block { background: #4a3540; }
 .beat-block.on { background: var(--accent); }
 .beat:first-child .beat-block.on { background: var(--accent-2); }
@@ -301,3 +301,68 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 32px; }
 .gapbar b { font-size: 46px; line-height: 1; font-variant-numeric: tabular-nums; }
 @media (orientation: landscape) and (max-height: 500px) { .gapbar { padding: 4px 16px; } .gapbar b { font-size: 30px; } }
 .cloud-btn { height: 34px; padding: 0 12px; border-radius: 10px; background: var(--surface-2); color: var(--accent-2); font-size: 13px; white-space: nowrap; }
+
+/* 关掉重音时，第一拍的方块也不再用特殊颜色 */
+.accent-row { margin-top: 12px; }
+body.no-accent .beat:first-child .beat-block:not(.rest) { background: var(--surface-2); }
+body.no-accent .beat:first-child .beat-block.on:not(.rest) { background: var(--accent); }
+
+/* 放开缩放后，避免双击按钮时误放大 */
+button, select, input, label, summary { touch-action: manipulation; }
+
+/* 预备拍、静音提示：放在屏幕中间，半透明，不挡住顶部的速度和按钮 */
+.gapbar { top: 50%; transform: translate(-50%, -50%); background: rgba(255, 107, 74, 0.82); }
+.mutebar, .toast { position: fixed; z-index: 56; left: 50%; transform: translateX(-50%); pointer-events: none; border-radius: 16px; color: #fff; white-space: nowrap; box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4); }
+.mutebar { top: 50%; transform: translate(-50%, -50%); padding: 12px 20px; font-size: 16px; font-weight: 600; background: rgba(80, 90, 140, 0.86); }
+.toast { bottom: calc(96px + env(safe-area-inset-bottom)); padding: 10px 16px; font-size: 14px; background: rgba(30, 32, 46, 0.95); white-space: normal; max-width: calc(100vw - 40px); text-align: center; }
+.mutebar[hidden], .toast[hidden] { display: none; }
+
+/* 练习辅助 */
+.train-tag { margin-top: 8px; font-size: 12px; color: var(--accent-2); text-align: center; }
+.train-tag[hidden] { display: none; }
+.tr-body { margin: 10px 0 4px; font-size: 14px; color: var(--dim); line-height: 2.4; }
+.tr-body.off { opacity: 0.45; }
+.tr-body select, .tr-body input, #trMute { background: var(--surface-2); color: var(--text); border: none; border-radius: 10px; padding: 6px 8px; font-size: 14px; }
+.tr-body input { width: 64px; }
+.sync-chip { margin-left: 6px; font-size: 12px; }
+.sync-chip[data-state="ok"] { color: #5ad18a; }
+.sync-chip[data-state="error"], .sync-chip[data-state="auth"] { color: #ff8a6a; }
+
+/* 曲谱页：按小节循环 */
+.song-btns { display: inline-flex; gap: 8px; }
+.loop-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; color: var(--dim); }
+.loop-row input { width: 56px; background: var(--surface-2); color: var(--text); border: none; border-radius: 10px; padding: 8px; font-size: 14px; text-align: center; }
+.loop-row button { height: 34px; padding: 0 12px; border-radius: 10px; background: var(--surface-2); color: var(--accent-2); font-size: 13px; }
+
+/* 曲谱页：全屏看谱——只留谱面和一条工具栏 */
+.song-fullbar { display: none; }
+body.song-full { overflow: hidden; }
+body.song-full .app > *:not(#viewSong), body.song-full #viewSong > *:not(#songBody), body.song-full .song-ctl, body.song-full .play-bar { display: none !important; }
+body.song-full .song-fullbar {
+  display: flex; align-items: center; gap: 8px; position: fixed; z-index: 26; left: 0; right: 0; top: 0;
+  padding: max(6px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 6px max(10px, env(safe-area-inset-left));
+  background: var(--bg);
+}
+.song-fulltitle { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.song-fullbar select { background: var(--surface-2); color: var(--text); border: none; border-radius: 10px; padding: 8px; font-size: 14px; }
+.song-fullbar .play { width: 112px; height: 38px; font-size: 15px; border-radius: 12px; flex-shrink: 0; max-width: none; }
+.song-fullbar .score-close { width: 38px; height: 38px; }
+body.song-full .song-paper {
+  position: fixed; z-index: 25; left: 0; right: 0; bottom: 0; top: calc(52px + env(safe-area-inset-top));
+  height: auto; margin: 0; border-radius: 0; padding: 4px max(6px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(6px, env(safe-area-inset-left));
+}
+
+/* 声画校准往右调时，曲谱页光标、音符高亮一起延后 */
+#songHost .at-cursor-beat, #songHost .at-cursor-bar { transition-delay: var(--song-av-delay, 0ms) !important; }
+
+/* 扫码配对 */
+.pair-first { margin-top: 10px; }
+.pair-btn { display: block; width: 100%; height: 44px; margin-top: 10px; border-radius: 12px; background: var(--accent); color: #fff; font-size: 15px; font-weight: 600; }
+.pair { position: fixed; inset: 0; z-index: 70; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(8, 9, 14, 0.8); }
+.pair[hidden] { display: none; }
+.pair-panel { width: 100%; max-width: 360px; background: var(--surface); border-radius: 18px; padding: 18px; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.pair-title { font-size: 16px; font-weight: 600; text-align: center; }
+#pairQr { width: 260px; height: 260px; background: #fff; border-radius: 10px; image-rendering: pixelated; }
+#pairVideo { width: 100%; max-height: 50vh; border-radius: 12px; background: #000; object-fit: cover; }
+.pair .sync-tip { text-align: center; }
+.pair-close { width: 100%; height: 44px; border-radius: 12px; background: var(--surface-2); color: var(--text); font-size: 15px; }

@@ -9,8 +9,15 @@
   const BASE = new URL('vendor/alphatab/', location.href).href;
   const SPEEDS = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.25];
 
-  let pref = { last: '', speed: 1, scale: 1, click: false, drums: true, band: true, loop: false };
-  try { Object.assign(pref, JSON.parse(localStorage.getItem(PREF_KEY)) || {}); } catch (e) { /* ignore */ }
+  let pref = { last: '', scale: 1 };
+  // 要跨设备一致的偏好：每份谱各自的速度、节拍点击、鼓声、伴奏、循环
+  const sp = () => (window.SongBridge && window.SongBridge.pref()) || { speeds: {}, click: false, drums: true, band: true, loop: false };
+  const setSp = (p) => { if (window.SongBridge) window.SongBridge.setPref(p); };
+  const curSpeed = () => (curId && sp().speeds[curId]) || 1;
+  let oldPref = {};
+  try { oldPref = JSON.parse(localStorage.getItem(PREF_KEY)) || {}; } catch (e) { /* ignore */ }
+  if (typeof oldPref.last === 'string') pref.last = oldPref.last;
+  if (Number.isFinite(oldPref.scale)) pref.scale = oldPref.scale;
   const savePref = () => { try { localStorage.setItem(PREF_KEY, JSON.stringify(pref)); } catch (e) { /* ignore */ } };
 
   // ---------- 本机存谱（IndexedDB） ----------
@@ -88,6 +95,10 @@
       sel.appendChild(o);
     });
     sel.value = String(shown);
+    const bars = score.masterBars.length;
+    $('loopFrom').max = $('loopTo').max = String(bars);
+    $('loopFrom').value = '1';
+    $('loopTo').value = String(Math.min(bars, 4));
     $('songTrackRow').hidden = tracks.length < 2;
     $('songDesc').textContent = [score.artist, score.tempo ? `${score.tempo} BPM` : ''].filter(Boolean).join(' · ') +
       (drum < 0 ? '（没找到鼓轨，显示的是第一个声部）' : '');
@@ -97,23 +108,28 @@
 
   function applyPlayerPrefs() {
     if (!api) return;
-    api.playbackSpeed = pref.speed;
-    api.isLooping = pref.loop;
-    api.metronomeVolume = pref.click ? 1 : 0;
+    const p = sp();
+    const vol = (window.SongBridge && window.SongBridge.volumes()) || { click: 1, drum: 1 };
+    api.playbackSpeed = curSpeed();
+    api.isLooping = p.loop || !!loopRange;
+    api.masterVolume = vol.drum;
+    api.metronomeVolume = p.click ? vol.click : 0;
     // 开了倒计时就用一小节的预备拍，跟着谱的速度
-    api.countInVolume = (window.SongBridge && window.SongBridge.countIn()) ? 1 : 0;
+    api.countInVolume = (window.SongBridge && window.SongBridge.countIn()) ? vol.click : 0;
+    // 声画校准往右调（延后）时，谱面光标和高亮也跟着延后
+    const d = window.SongBridge ? window.SongBridge.avDelayMs() : 0;
+    document.documentElement.style.setProperty('--song-av-delay', d + 'ms');
     if (score) {
       const drums = score.tracks.filter(isDrumTrack), others = score.tracks.filter((t) => !isDrumTrack(t));
-      if (drums.length) api.changeTrackMute(drums, !pref.drums);
-      if (others.length) api.changeTrackMute(others, !pref.band);
+      if (drums.length) api.changeTrackMute(drums, !p.drums);
+      if (others.length) api.changeTrackMute(others, !p.band);
     }
   }
 
   function refreshPlay() {
     if (!window.SongBridge || window.SongBridge.mode() !== 'song') return;
-    const b = $('play');
-    b.textContent = playingNow ? '■ 停止' : (readyPlay || !score ? '▶ 开始' : '音色加载中…');
-    b.classList.toggle('running', playingNow);
+    const label = playingNow ? '■ 停止' : (readyPlay || !score ? '▶ 开始' : '音色加载中…');
+    ['play', 'songFullPlay'].forEach((id) => { const b = $(id); b.textContent = label; b.classList.toggle('running', playingNow); });
   }
 
   // ---------- 曲谱列表 ----------
@@ -150,6 +166,9 @@
     curId = rec.id;
     pref.last = rec.id; savePref();
     $('songTitle').textContent = rec.name;
+    $('songFullTitle').textContent = rec.name;
+    loopRange = null;
+    syncControls();
     $('songDesc').textContent = '';
     $('songBody').hidden = false;
     $('songScroll').classList.add('busy');
@@ -274,19 +293,91 @@
 
   // ---------- 界面事件 ----------
   function syncControls() {
-    $('songSpeed').value = String(pref.speed);
-    $('songLoop').checked = pref.loop;
-    $('songClick').checked = pref.click;
-    $('songDrums').checked = pref.drums;
-    $('songBand').checked = pref.band;
+    const p = sp();
+    const v = String(curSpeed());
+    $('songSpeed').value = v;
+    $('songSpeed2').value = v;
+    $('songLoop').checked = p.loop || !!loopRange;
+    $('songClick').checked = p.click;
+    $('songDrums').checked = p.drums;
+    $('songBand').checked = p.band;
     $('songScaleVal').textContent = Math.round(pref.scale * 100) + '%';
   }
+
+  // ---------- 按小节号循环 ----------
+  let loopRange = null;
+  function setLoop() {
+    if (!api || !score) return;
+    const n = score.masterBars.length;
+    let a = Math.round(Number($('loopFrom').value)) || 1, b = Math.round(Number($('loopTo').value)) || a;
+    a = Math.max(1, Math.min(n, a)); b = Math.max(a, Math.min(n, b));
+    $('loopFrom').value = String(a); $('loopTo').value = String(b);
+    const mb = score.masterBars;
+    const startTick = mb[a - 1].start, endTick = mb[b - 1].start + mb[b - 1].calculateDuration();
+    loopRange = { startTick, endTick };
+    api.playbackRange = loopRange;
+    api.isLooping = true;
+    try {
+      const track = score.tracks[Number($('songTrack').value) || 0];
+      const bars = track.staves[0].bars;
+      const first = bars[a - 1].voices[0].beats[0];
+      const lastBeats = bars[b - 1].voices[0].beats;
+      api.highlightPlaybackRange(first, lastBeats[lastBeats.length - 1]);
+    } catch (e) { /* 只是画选区，失败不影响循环 */ }
+    api.tickPosition = startTick;
+    syncControls();
+    say('循环第 ' + a + (b > a ? ' 到 ' + b : '') + ' 小节，点“取消”恢复整首');
+  }
+  function clearLoop() {
+    loopRange = null;
+    if (api) {
+      api.playbackRange = null;
+      try { api.clearPlaybackRangeHighlight(); } catch (e) { /* ignore */ }
+      applyPlayerPrefs();
+    }
+    syncControls();
+    say('');
+  }
+
+  // ---------- 全屏看谱 ----------
+  function enterFull() {
+    if (!curId) { say('先选一份谱文件'); return; }
+    document.body.classList.add('song-full');
+    relayout();
+  }
+  function exitFull() {
+    if (!document.body.classList.contains('song-full')) return;
+    document.body.classList.remove('song-full');
+    if (window.AppOrient) window.AppOrient.release();
+    relayout();
+  }
+  // 谱面宽度变了要重新排版（alphaTab 只在窗口变化时自己排）
+  let relayoutTimer = null;
+  function relayout() {
+    clearTimeout(relayoutTimer);
+    relayoutTimer = setTimeout(() => { if (api && score) api.render(); }, 250);
+  }
+  window.addEventListener('resize', () => { if (document.body.classList.contains('song-full')) relayout(); });
+
+  const setSpeed = (v) => {
+    if (curId) setSp({ speeds: Object.assign({}, sp().speeds, { [curId]: v }) });
+    if (api) api.playbackSpeed = v;
+    syncControls();
+  };
   function wire() {
-    SPEEDS.forEach((v) => {
+    ['songSpeed', 'songSpeed2'].forEach((id) => SPEEDS.forEach((v) => {
       const o = document.createElement('option');
       o.value = String(v); o.textContent = Math.round(v * 100) + '%';
-      $('songSpeed').appendChild(o);
-    });
+      $(id).appendChild(o);
+    }));
+    $('songFull').addEventListener('click', enterFull);
+    $('songRot').addEventListener('click', () => { enterFull(); if (curId && window.AppOrient) window.AppOrient.lock(); });
+    $('songFullRot').addEventListener('click', () => { if (window.AppOrient) window.AppOrient.toggle(); });
+    $('songFullExit').addEventListener('click', exitFull);
+    $('songFullPlay').addEventListener('click', () => window.SongUI.toggle());
+    $('songSpeed2').addEventListener('change', (e) => setSpeed(Number(e.target.value)));
+    $('loopSet').addEventListener('click', setLoop);
+    $('loopClear').addEventListener('click', clearLoop);
     $('songFile').addEventListener('change', async (e) => {
       const f = e.target.files && e.target.files[0];
       e.target.value = '';
@@ -308,11 +399,11 @@
       if (row) { const rec = await dbGet(row.dataset.id); if (rec) openRecord(rec); }
     });
     $('songCloudBtn').addEventListener('click', () => cloudSync());
-    $('songSpeed').addEventListener('change', (e) => { pref.speed = Number(e.target.value); savePref(); if (api) api.playbackSpeed = pref.speed; });
-    $('songLoop').addEventListener('change', (e) => { pref.loop = e.target.checked; savePref(); applyPlayerPrefs(); });
-    $('songClick').addEventListener('change', (e) => { pref.click = e.target.checked; savePref(); applyPlayerPrefs(); });
-    $('songDrums').addEventListener('change', (e) => { pref.drums = e.target.checked; savePref(); applyPlayerPrefs(); });
-    $('songBand').addEventListener('change', (e) => { pref.band = e.target.checked; savePref(); applyPlayerPrefs(); });
+    $('songSpeed').addEventListener('change', (e) => setSpeed(Number(e.target.value)));
+    $('songLoop').addEventListener('change', (e) => { if (!e.target.checked && loopRange) clearLoop(); setSp({ loop: e.target.checked }); applyPlayerPrefs(); });
+    $('songClick').addEventListener('change', (e) => { setSp({ click: e.target.checked }); applyPlayerPrefs(); });
+    $('songDrums').addEventListener('change', (e) => { setSp({ drums: e.target.checked }); applyPlayerPrefs(); });
+    $('songBand').addEventListener('change', (e) => { setSp({ band: e.target.checked }); applyPlayerPrefs(); });
     $('songTrack').addEventListener('change', (e) => { if (score && api) { stop(); api.renderTracks([score.tracks[Number(e.target.value)]]); } });
     document.querySelectorAll('[data-sscale]').forEach((b) => b.addEventListener('click', () => {
       pref.scale = Math.min(1.6, Math.max(0.6, Math.round((pref.scale + Number(b.dataset.sscale)) * 100) / 100));
@@ -330,7 +421,9 @@
       if (!curId && pref.last) { const rec = await dbGet(pref.last).catch(() => null); if (rec) openRecord(rec); }
       refreshPlay();
     },
-    leave() { stop(); },
+    leave() { stop(); exitFull(); },
+    prefsChanged() { syncControls(); applyPlayerPrefs(); },
+    cloudNow() { lastCloud = Date.now(); cloudSync(); },
     playing: () => playingNow,
     async toggle() {
       if (!api || !score) { say('先选一份谱文件'); return; }
@@ -345,6 +438,11 @@
   const rerender = () => { if (api && score && !$('songHost').querySelector('svg')) api.render(); };
   document.addEventListener('visibilitychange', () => { if (!document.hidden) rerender(); });
   window.SongUI.rerender = rerender;
+
+  let lastCloud = 0;
+  const cloudSoon = () => { if (cloudOn() && Date.now() - lastCloud > 60000) { lastCloud = Date.now(); cloudSync(); } };
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) cloudSoon(); });
+  setTimeout(cloudSoon, 3000);
 
   wire();
   syncControls();

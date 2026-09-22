@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>鼓手节拍器</title>
 <meta name="theme-color" content="#12131c">
 <link rel="manifest" href="manifest.webmanifest">
@@ -31,6 +31,7 @@
       <button data-bpm="1">+1</button>
       <button data-bpm="5">+5</button>
     </div>
+    <div class="train-tag" id="trainTag" hidden></div>
   </section>
 
   <div class="view" id="viewMetro">
@@ -152,7 +153,7 @@
       <section class="pattern song-ctl">
         <div class="sync-row"><span>播放速度</span><select id="songSpeed" aria-label="播放速度"></select></div>
         <div class="sync-row" id="songTrackRow" hidden><span>显示的声部</span><select id="songTrack" aria-label="显示的声部"></select></div>
-        <div class="sync-row"><span>屏幕方向</span><button class="song-rot" id="songRot" aria-label="切换横屏">⟳ 横屏</button></div>
+        <div class="sync-row"><span>看谱</span><span class="song-btns"><button class="song-rot" id="songFull">⛶ 全屏看谱</button><button class="song-rot" id="songRot" aria-label="全屏并切到横屏">⟳ 横屏</button></span></div>
         <div class="sync-row"><span>谱面大小</span><span class="song-scale"><button data-sscale="-0.1" aria-label="缩小">−</button><b id="songScaleVal">100%</b><button data-sscale="0.1" aria-label="放大">+</button></span></div>
         <div class="song-checks">
           <label class="check"><input type="checkbox" id="songLoop"><span>循环</span></label>
@@ -160,8 +161,22 @@
           <label class="check"><input type="checkbox" id="songDrums"><span>鼓声</span></label>
           <label class="check"><input type="checkbox" id="songBand"><span>伴奏</span></label>
         </div>
-        <div class="sync-tip">想自己打鼓：关掉“鼓声”，只听伴奏。点谱面某一处可从那里开始；拖选一段再开“循环”可反复练。</div>
+        <div class="loop-row">
+          <span>循环小节</span>
+          <input type="number" id="loopFrom" min="1" value="1" inputmode="numeric" aria-label="从第几小节">
+          <span>到</span>
+          <input type="number" id="loopTo" min="1" value="1" inputmode="numeric" aria-label="到第几小节">
+          <button id="loopSet">循环这段</button><button id="loopClear">取消</button>
+        </div>
+        <div class="sync-tip">想自己打鼓：关掉“鼓声”，只听伴奏。点谱面某一处可从那里开始；填上小节号点“循环这段”，就会反复练这几小节。</div>
       </section>
+      <div class="song-fullbar" id="songFullBar">
+        <button class="score-close" id="songFullExit" aria-label="退出全屏">✕</button>
+        <div class="song-fulltitle" id="songFullTitle"></div>
+        <select id="songSpeed2" aria-label="播放速度"></select>
+        <button class="song-rot" id="songFullRot" aria-label="切换横屏">⟳ 横屏</button>
+        <button class="play" id="songFullPlay">▶ 开始</button>
+      </div>
       <div class="song-paper" id="songScroll"><div id="songHost"></div></div>
     </div>
     <div class="pattern-title c-presets-title">这台设备上的谱</div>
@@ -169,8 +184,26 @@
     <div class="song-cloud"><span id="songCloud"></span><button id="songCloudBtn">立即同步谱文件</button></div>
   </div>
 
+  <details class="sync-box" id="trainBox">
+    <summary>练习辅助（渐进加速、随机静音）</summary>
+    <div class="sync-body">
+      <label class="check"><input type="checkbox" id="trOn"><span>渐进加速</span></label>
+      <div class="tr-body" id="trBody">
+        每 <select id="trEvery" aria-label="每几遍"><option value="1">1</option><option value="2">2</option><option value="4">4</option><option value="8">8</option></select> 遍，
+        加 <select id="trStep" aria-label="每次加多少"><option value="1">1</option><option value="2">2</option><option value="5">5</option><option value="10">10</option></select> BPM，
+        最高 <input type="number" id="trMax" min="30" max="300" inputmode="numeric" aria-label="最高速度"> BPM
+      </div>
+      <div class="sync-tip">“一遍”：节拍器页是一小节；基础节奏、鼓垫练习是一个节奏型；变速练习是整页谱。停下后速度自动回到开始时的值。</div>
+      <div class="sync-sep"></div>
+      <div class="sync-row"><span>随机静音</span>
+        <select id="trMute" aria-label="随机静音"><option value="0">关闭</option><option value="1">少（约 5 小节 1 次）</option><option value="2">中（约 3 小节 1 次）</option><option value="3">多（约 2 小节 1 次）</option></select>
+      </div>
+      <div class="sync-tip">随机让某一小节完全不出声，你照常打下去；下一小节声音回来时，看你是不是还踩在拍子上。用来练心里的节拍。不会连续静音两小节。</div>
+    </div>
+  </details>
+
   <details class="sync-box" id="syncBox">
-    <summary>设置（倒计时、声画同步、云同步）</summary>
+    <summary>设置（倒计时、音量、声画同步、云同步）<span class="sync-chip" id="syncChip"></span></summary>
     <div class="sync-body">
       <div class="sync-row">
         <span>开始前倒计时</span>
@@ -178,19 +211,33 @@
           <option value="0">关闭</option><option value="3">3 秒</option><option value="4">4 秒</option><option value="6">6 秒</option><option value="8">8 秒</option>
         </select>
       </div>
+      <label class="check accent-row"><input type="checkbox" id="accent"><span>每小节第一拍用重音（关掉后四拍的声音和颜色完全一样）</span></label>
       <div class="sync-tip">按开始后，先用当前速度打几拍空拍“点”声，让你熟悉速度、摆好姿势，最后 4 拍是“1 2 3 4”，接着无缝进入练习。</div>
       <div class="sync-sep"></div>
+      <div class="sync-row"><span>参考音（点声）音量</span><b id="volClickVal">100%</b></div>
+      <input type="range" id="volClick" min="0" max="150" step="5" value="100" aria-label="参考音音量">
+      <div class="sync-row"><span>鼓声 / 节奏音量</span><b id="volDrumVal">100%</b></div>
+      <input type="range" id="volDrum" min="0" max="150" step="5" value="100" aria-label="鼓声音量">
+      <div class="sync-tip">音量只对这台设备有效，手机外放和平板音箱可以分别调。</div>
+      <div class="sync-sep"></div>
       <div class="sync-row"><span>声画同步校准（高亮延迟）</span><b id="avVal">0 ms</b></div>
-      <input type="range" id="avSlider" min="-80" max="500" step="10" value="0" aria-label="高亮延迟">
+      <input type="range" id="avSlider" min="-300" max="500" step="10" value="0" aria-label="高亮延迟">
       <div class="sync-tip" id="avTip"></div>
       <div class="sync-sep"></div>
       <div class="sync-row"><span>云同步（多台设备共用）</span><b id="cloudState" class="cloud-state">未开启</b></div>
       <div id="cloudOff">
+        <div class="pair-first">
+          <div class="sync-tip"><b>另一台设备已经开了同步？</b>在那台设备上点“添加设备”显示二维码，这台点下面按钮扫一下就好，不用再去 GitHub。</div>
+          <button class="pair-btn" id="pairScan">📷 扫码加入同步</button>
+        </div>
+        <div class="sync-sep"></div>
+        <div class="sync-tip"><b>第一台设备：</b></div>
         <div class="sync-tip">把设置和保存的谱放进你自己 GitHub 账号里的一个秘密 Gist，手机、平板、电脑用同一个令牌就能看到一样的内容。<br>
           ① 点 <a href="https://github.com/settings/tokens/new?scopes=gist&amp;description=drum-metronome" target="_blank" rel="noopener">这里</a> 生成令牌（只勾“gist”，有效期建议选“不过期”）；② 复制后粘贴到下面；③ 每台设备都填同一个令牌。令牌只存在本机浏览器里。</div>
         <div class="cloud-row"><input type="password" id="cloudToken" placeholder="粘贴 GitHub 令牌" autocomplete="off" autocapitalize="off" spellcheck="false"><button id="cloudEnable">开启</button></div>
       </div>
       <div id="cloudOn" hidden>
+        <button class="pair-btn" id="pairShow">＋ 添加设备（显示二维码）</button>
         <div class="cloud-row"><button id="cloudNow">立即同步</button><button id="cloudChange">更换令牌</button><button id="cloudOff2">关闭同步</button></div>
         <div class="sync-tip">改动后几秒内自动同步；声画校准是每台设备自己的，不同步。关闭同步只影响这台设备，云端数据保留。</div>
       </div>
@@ -210,6 +257,18 @@
   </div>
 </div>
 
+<div class="pair" id="pair" hidden>
+  <div class="pair-panel" role="dialog" aria-modal="true">
+    <div class="pair-title" id="pairTitle"></div>
+    <canvas id="pairQr" hidden></canvas>
+    <video id="pairVideo" playsinline muted hidden></video>
+    <div class="sync-tip" id="pairTip"></div>
+    <button class="pair-close" id="pairClose">关闭</button>
+  </div>
+</div>
+
+<div class="mutebar" id="muteBar" hidden aria-live="polite">静音小节 · 心里数着继续打</div>
+<div class="toast" id="toast" hidden aria-live="polite"></div>
 <div class="gapbar" id="gapBar" hidden aria-live="polite"><span id="gapLabel">预备</span><b id="gapNum">1</b></div>
 
 <div class="countdown" id="countdown" hidden>

@@ -1,7 +1,7 @@
 {
   "name": "鼓手节拍器",
   "short_name": "鼓手节拍器",
-  "description": "离线可用的架子鼓节拍器：动态节奏变化、练习计划、自定义鼓谱型、谱面参考与配乐练习",
+  "description": "离线可用的架子鼓练习节拍器：节拍器、基础节奏、鼓垫手序、变速练习谱、曲谱跟随播放，支持多设备云同步",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

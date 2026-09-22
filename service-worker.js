@@ -1,5 +1,5 @@
 // 离线外壳：联网时总取最新版，断网用缓存。每次改动任何预缓存文件都要改 CACHE_NAME。
-const CACHE_NAME = 'drum-metronome-v42';
+const CACHE_NAME = 'drum-metronome-v46';
 const PRECACHE = [
   './',
   'index.html',
@@ -10,6 +10,7 @@ const PRECACHE = [
   'vendor/alphatab/alphaTab.min.js',
   'vendor/alphatab/font/Bravura.woff2',
   'vendor/alphatab/soundfont/sonivox.sf2',
+  'vendor/qrcode/qrcode.js',
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',

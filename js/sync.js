@@ -230,6 +230,9 @@
     else if (state === 'error') line = msg;
     else if (on && cfg.last) line = '上次同步：' + fmt(cfg.last);
     $('cloudMsg').textContent = line;
+    // 设置标题旁边也显示同步状态，不用展开就知道有没有同步上
+    const chip = $('syncChip');
+    if (chip) { chip.textContent = on ? '· ' + label : '· 云同步未开启'; chip.dataset.state = on ? state : 'off'; }
   }
   const say = (t) => { if ($('cloudMsg')) $('cloudMsg').textContent = t; };
 
@@ -239,7 +242,7 @@
     $('cloudEnable').addEventListener('click', async () => {
       const token = $('cloudToken').value.trim();
       if (!/^[A-Za-z0-9_]{20,255}$/.test(token)) { say('令牌格式不对：应是 ghp_ 或 github_pat_ 开头的一长串字符'); return; }
-      cfg = { token, gistId: '', last: 0 };
+      cfg = { token, gistId: '', songsGist: '', last: 0 };
       verified = false;
       $('cloudToken').value = '';
       saveCfg();
@@ -247,13 +250,118 @@
       await sync();
     });
     $('cloudNow').addEventListener('click', () => { verified = false; sync(); });
+    $('pairShow').addEventListener('click', showPairCode);
+    $('pairScan').addEventListener('click', scanPairCode);
+    $('pairClose').addEventListener('click', closePair);
     $('cloudChange').addEventListener('click', () => {
       cfg.token = ''; saveCfg(); state = 'off'; render();       // 保留 gistId，换新令牌后仍接回同一份数据
       $('cloudToken').focus();
     });
     $('cloudOff2').addEventListener('click', () => {
-      cfg = { token: '', gistId: '', last: 0 }; saveCfg(); state = 'off'; render();
+      cfg = { token: '', gistId: '', songsGist: '', last: 0 }; saveCfg(); state = 'off'; render();
     });
+  }
+
+  // ---------- 扫码配对：已开启的设备显示二维码，新设备用摄像头扫一下就接入同一份同步数据 ----------
+  // 二维码里是令牌和两个 Gist 的编号，只在屏幕上显示、不上传、不写日志；两分钟后自动关掉。
+  const PAIR_PREFIX = 'DRUMSYNC1:';
+  let pairTimer = null, pairStream = null, pairLoop = null;
+  const pairEl = (id) => $(id);
+  function openPair(title, tip) {
+    pairEl('pairTitle').textContent = title;
+    pairEl('pairTip').textContent = tip;
+    pairEl('pair').hidden = false;
+  }
+  function closePair() {
+    clearTimeout(pairTimer);
+    clearInterval(pairLoop); pairLoop = null;
+    if (pairStream) { pairStream.getTracks().forEach((t) => t.stop()); pairStream = null; }
+    const v = pairEl('pairVideo'); v.srcObject = null; v.hidden = true;
+    const cv = pairEl('pairQr'); cv.hidden = true; cv.getContext('2d').clearRect(0, 0, cv.width, cv.height);
+    pairEl('pair').hidden = true;
+  }
+  function loadQrLib() {
+    if (window.qrcode) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const el = document.createElement('script');
+      el.src = 'vendor/qrcode/qrcode.js';
+      el.onload = resolve; el.onerror = reject;
+      document.head.appendChild(el);
+    });
+  }
+  async function showPairCode() {
+    if (!cfg.token) return;
+    if (!cfg.gistId) { await sync(); }                 // 先确保云端已经建好，扫码的设备才能直接接上
+    try { await loadQrLib(); } catch (e) { say('二维码组件没加载出来，检查网络后重试'); return; }
+    const payload = PAIR_PREFIX + btoa(JSON.stringify({ t: cfg.token, g: cfg.gistId || '', s: cfg.songsGist || '' }));
+    const qr = window.qrcode(0, 'M');
+    qr.addData(payload);
+    qr.make();
+    const n = qr.getModuleCount(), quiet = 4, px = Math.max(3, Math.floor(520 / (n + quiet * 2)));
+    const cv = pairEl('pairQr');
+    cv.width = cv.height = (n + quiet * 2) * px;
+    const g = cv.getContext('2d');
+    g.fillStyle = '#fff'; g.fillRect(0, 0, cv.width, cv.height);
+    g.fillStyle = '#000';
+    for (let r = 0; r < n; r++) for (let col = 0; col < n; col++) if (qr.isDark(r, col)) g.fillRect((col + quiet) * px, (r + quiet) * px, px, px);
+    cv.hidden = false;
+    openPair('用另一台设备扫这个码', '在另一台设备上打开 App → 设置 → 云同步 → “扫码加入同步”。这个码能读写你的同步数据，只给自己的设备扫，别拍照发给别人。两分钟后自动关闭。');
+    clearTimeout(pairTimer);
+    pairTimer = setTimeout(closePair, 120000);
+  }
+  function parsePair(text) {
+    if (typeof text !== 'string' || !text.startsWith(PAIR_PREFIX)) return null;
+    try {
+      const o = JSON.parse(atob(text.slice(PAIR_PREFIX.length)));
+      const idOk = (x) => x === '' || /^[0-9a-f]{8,64}$/i.test(x);
+      if (!/^[A-Za-z0-9_]{20,255}$/.test(o.t) || !idOk(o.g || '') || !idOk(o.s || '')) return null;
+      return { token: o.t, gistId: o.g || '', songsGist: o.s || '' };
+    } catch (e) { return null; }
+  }
+  async function scanPairCode() {
+    if (!('BarcodeDetector' in window) || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      say('这个浏览器不支持在 App 里扫码。请用 Chrome 打开，或者用下面粘贴令牌的方式。');
+      return;
+    }
+    let detector;
+    try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { say('这个浏览器不支持扫二维码，请用粘贴令牌的方式。'); return; }
+    openPair('对准另一台设备上的二维码', '在已经开了同步的设备上：设置 → 云同步 → “添加设备”。');
+    try {
+      pairStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+    } catch (e) {
+      closePair();
+      say('没能打开摄像头。请在浏览器里允许这个网站使用摄像头，再点一次“扫码加入同步”。');
+      return;
+    }
+    const v = pairEl('pairVideo');
+    v.srcObject = pairStream; v.hidden = false;
+    try { await v.play(); } catch (e) { /* 部分浏览器需要再点一下，下面的检测照样进行 */ }
+    let busy = false;
+    pairLoop = setInterval(async () => {
+      if (busy || v.readyState < 2) return;
+      busy = true;
+      try {
+        const codes = await detector.detect(v);
+        for (const code of codes) {
+          const p = parsePair(code.rawValue);
+          if (p) {
+            closePair();
+            cfg = { token: p.token, gistId: p.gistId, songsGist: p.songsGist, last: 0 };
+            verified = false;
+            saveCfg();
+            render();
+            say('已加入同步，正在拉取另一台设备的内容…');
+            await sync();
+            if (window.SongUI && window.SongUI.cloudNow) window.SongUI.cloudNow();
+            return;
+          }
+          if (code.rawValue) pairEl('pairTip').textContent = '扫到的不是本 App 的配对码，请对准“添加设备”显示的二维码。';
+        }
+      } catch (e) { /* 单帧识别失败不要紧，继续扫 */ }
+      busy = false;
+    }, 250);
+    clearTimeout(pairTimer);
+    pairTimer = setTimeout(() => { closePair(); say('扫码超时，再点一次“扫码加入同步”。'); }, 120000);
   }
 
   // ---------- 触发时机 ----------

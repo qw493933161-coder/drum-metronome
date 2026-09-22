@@ -75,7 +75,30 @@
   // 云同步：这些设置项各自记“最后修改时间”，跨设备时谁最后改的谁生效。
   // 声画延迟校准（avOffset）、撤销历史（hist）是每台设备自己的，不同步。
   const SYNC_KEYS = ['bpm', 'beats', 'subdiv', 'ticks', 'cells', 'groove', 'gclick', 'pad', 'pclick',
-    'combo', 'ctab', 'cclick', 'rbars', 'rdiff', 'curMine', 'cdSec', 'dtext', 'gap'];
+    'combo', 'ctab', 'cclick', 'rbars', 'rdiff', 'curMine', 'cdSec', 'dtext', 'gap', 'accent', 'train', 'tempos', 'songPref'];
+  function normTrain(t) {
+    t = t && typeof t === 'object' ? t : {};
+    const pick = (v, list, d) => (list.includes(v) ? v : d);
+    return {
+      on: t.on === true,
+      every: pick(t.every, [1, 2, 4, 8], 2),
+      step: pick(t.step, [1, 2, 5, 10], 5),
+      max: Number.isFinite(t.max) ? Math.max(30, Math.min(300, Math.round(t.max))) : 120,
+      mute: pick(t.mute, [0, 1, 2, 3], 0)
+    };
+  }
+  function normTempos(o) {
+    const r = {};
+    if (o && typeof o === 'object') Object.keys(o).slice(-200).forEach((k) => { if (Number.isFinite(o[k])) r[k] = Math.max(20, Math.min(300, Math.round(o[k]))); });
+    return r;
+  }
+  function normSongPref(p) {
+    p = p && typeof p === 'object' ? p : {};
+    const speeds = {};
+    if (p.speeds && typeof p.speeds === 'object') Object.keys(p.speeds).slice(-200).forEach((k) => { const v = Number(p.speeds[k]); if (v >= 0.25 && v <= 2) speeds[k] = v; });
+    const b = (v, d) => (typeof v === 'boolean' ? v : d);
+    return { speeds, click: b(p.click, false), drums: b(p.drums, true), band: b(p.band, true), loop: b(p.loop, false) };
+  }
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem(STORE_KEY)) || {}; } catch (e) { /* ignore */ }
   // 升级前就存在的旧数据没有时间戳：记成 1，比“全新设备(0)”新，但比任何新改动旧
@@ -91,8 +114,15 @@
     cclick: saved.cclick !== false,
     cdSec: [0, 3, 4, 6, 8].includes(saved.cdSec) ? saved.cdSec : 4,
     gap: [0, 2, 4].includes(saved.gap) ? saved.gap : 4,
+    accent: saved.accent === true,        // 每小节第一拍重音，默认关：四拍一样
+    train: normTrain(saved.train),        // 渐进加速 + 随机静音
+    tempos: normTempos(saved.tempos),     // 每个练习各自记住的速度
+    songPref: normSongPref(saved.songPref),
+    // 音量是每台设备自己的（手机外放和平板音箱不一样），不同步
+    volClick: Number.isFinite(saved.volClick) ? Math.max(0, Math.min(150, Math.round(saved.volClick))) : 100,
+    volDrum: Number.isFinite(saved.volDrum) ? Math.max(0, Math.min(150, Math.round(saved.volDrum))) : 100,
     dtext: typeof saved.dtext === 'string' ? saved.dtext.slice(0, 2000) : '',
-    avOffset: Number.isFinite(saved.avOffset) ? Math.max(-80, Math.min(500, Math.round(saved.avOffset))) : 0,
+    avOffset: Number.isFinite(saved.avOffset) ? Math.max(-300, Math.min(500, Math.round(saved.avOffset))) : 0,
     mine: Array.isArray(saved.mine) ? saved.mine.filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string' && Array.isArray(m.seq)) : [],
     curMine: typeof saved.curMine === 'string' ? saved.curMine : null,
     hist: Array.isArray(saved.hist) ? saved.hist.filter((x) => typeof x === 'string').slice(-30) : [],
@@ -127,6 +157,7 @@
   };
 
   let ctx = null, out = null, schedTimer = null, drainTimer = null;
+  let clickBus = null, drumBus = null, gate = null;
   let playing = false, nextTime = 0, pos = { beat: 0, sub: 0 }, queue = [];
   let blocks = [], dots = [], lit = null, wake = null, tapTimes = [];
 
@@ -138,6 +169,7 @@
     { type: 'triangle', freq: 520, gain: 0.85, dur: 0.09 } // 3 rhythm-pattern hit
   ];
   function tone(time, kind, vol = 1) {
+    if (kind === 0 && !s.accent) kind = 1;       // 关掉重音时，第一拍和其他拍用同一个声音
     const c = CLICK[kind];
     const osc = ctx.createOscillator();
     const g = ctx.createGain();
@@ -145,9 +177,43 @@
     osc.frequency.value = c.freq;
     g.gain.setValueAtTime(c.gain * vol, time);
     g.gain.exponentialRampToValueAtTime(0.001, time + c.dur);
-    osc.connect(g).connect(out);
+    osc.connect(g).connect(kind === 3 ? drumBus : clickBus);
     osc.start(time);
     osc.stop(time + c.dur + 0.02);
+  }
+
+  function applyVolumes() {
+    if (clickBus) clickBus.gain.value = s.volClick / 100;
+    if (drumBus) drumBus.gain.value = s.volDrum / 100;
+  }
+
+  // ---------- 练习辅助：每小节开始时决定是否静音；每遍开始时决定是否加速 ----------
+  // “一遍”：节拍器页 = 一小节；基础节奏、鼓垫 = 一个节奏型（一小节）；变速练习 = 整页谱
+  const MUTE_P = [0, 0.2, 0.33, 0.5];
+  let barNo = 0, passNo = 0, lastMuted = false, trainFrom = null;
+  function onBar(t) {
+    barNo++;
+    const p = MUTE_P[s.train.mute] || 0;
+    // 第一小节永远出声；不连续静音两小节，免得完全找不到拍子
+    const muted = p > 0 && barNo > 1 && !lastMuted && Math.random() < p;
+    if (muted !== lastMuted) {
+      gate.gain.setValueAtTime(muted ? 0 : 1, t);
+      queue.push({ t, mute: muted });
+    }
+    lastMuted = muted;
+  }
+  function unmuteAt(t) {
+    if (!lastMuted) return;
+    gate.gain.setValueAtTime(1, t);
+    queue.push({ t, mute: false });
+    lastMuted = false;
+  }
+  function onPass(t) {
+    passNo++;
+    const tr = s.train;
+    if (!tr.on || passNo <= 1 || (passNo - 1) % tr.every !== 0 || s.bpm >= tr.max) return;
+    s.bpm = Math.min(tr.max, s.bpm + tr.step);          // 从这一遍开始按新速度排
+    queue.push({ t, bpm: s.bpm });
   }
 
   // 前台 0.12 秒；后台时定时器会被系统降速，多排几秒，靠音频时钟继续准点出声
@@ -158,6 +224,7 @@
     while (nextTime < horizon) {
       if (pos.beat >= s.beats) pos.beat = 0;
       if (pos.sub >= s.subdiv) pos.sub = 0;
+      if (pos.beat === 0 && pos.sub === 0) { onPass(nextTime); onBar(nextTime); }
       if (pos.sub === 0) tone(nextTime, pos.beat === 0 ? 0 : 1);
       else if (s.ticks) tone(nextTime, 2);
       if (s.cells[pos.beat] && s.cells[pos.beat][pos.sub] === '1') tone(nextTime, 3);
@@ -241,7 +308,7 @@
     o.frequency.exponentialRampToValueAtTime(45, t + 0.13);
     g.gain.setValueAtTime(1, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
-    o.connect(g).connect(out);
+    o.connect(g).connect(drumBus);
     o.start(t); o.stop(t + 0.35);
   }
   function noiseHit(t, hp, gain, dur) {
@@ -252,7 +319,7 @@
     const g = ctx.createGain();
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-    src.connect(f).connect(g).connect(out);
+    src.connect(f).connect(g).connect(drumBus);
     src.start(t, Math.random() * 0.5);
     src.stop(t + dur + 0.02);
   }
@@ -262,7 +329,7 @@
     o.type = 'triangle'; o.frequency.value = 190;
     g.gain.setValueAtTime(0.45 * vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-    o.connect(g).connect(out);
+    o.connect(g).connect(drumBus);
     o.start(t); o.stop(t + 0.12);
   }
   const hat = (t, open) => noiseHit(t, 7000, open ? 0.35 : 0.3, open ? 0.28 : 0.05);
@@ -274,6 +341,7 @@
     while (nextTime < horizon) {
       if (gstep >= total) gstep = 0;
       const t = nextTime;
+      if (gstep === 0) { onPass(t); onBar(t); }
       if (g.hh.includes(gstep)) hat(t, false);
       if (g.hho && g.hho.includes(gstep)) hat(t, true);
       if (g.sn.includes(gstep)) snare(t);
@@ -398,6 +466,7 @@
     const horizon = ctx.currentTime + lookahead();
     while (nextTime < horizon) {
       if (gstep >= total) gstep = 0;
+      if (gstep === 0) { onPass(nextTime); onBar(nextTime); }
       const hit = ex.hits[gstep];
       if (hit) snare(nextTime, hit.a ? 1 : 0.62);
       if (s.pclick && gstep % ex.spb === 0) tone(nextTime, gstep === 0 ? 0 : 1, 0.45);
@@ -421,7 +490,9 @@
   // 声音从"安排的时间"到耳朵还要经过设备输出延迟（手机几十毫秒，蓝牙耳机上百毫秒），
   // 高亮按"听到的时间"走：自动扣除设备报告的延迟，再加上用户手动校准的偏移
   function autoLatency() { return ctx ? (ctx.outputLatency || ctx.baseLatency || 0) : 0; }
-  function visualLag() { return autoLatency() + s.avOffset / 1000; }
+  // 屏幕从改颜色到真正亮出来还要约 2 帧（排版、合成、屏幕刷新），高亮提前这么多，才能和声音同时被看到
+  const SCREEN_LEAD = 0.03;
+  function visualLag() { return autoLatency() + s.avOffset / 1000 - SCREEN_LEAD; }
   // ---- 开始前倒计时：先按当前速度打几拍空拍“点”，最后 4 拍是 1 2 3 4，练习踩在拍点上开始 ----
   let countStart = 0, countEnd = null, countSec = 0;
   function startCountIn() {
@@ -454,9 +525,14 @@
     const now = ctx.currentTime - visualLag();
     updateCountdown(now);
     let due = null;
-    while (queue.length && queue[0].t <= now) due = queue.shift();
+    while (queue.length && queue[0].t <= now) {
+      const e = queue.shift();
+      if (e.gap) { showGap(e.gap); due = null; continue; }
+      if ('mute' in e) { $('muteBar').hidden = !e.mute; continue; }
+      if (e.bpm) { $('bpm').textContent = e.bpm; $('scoreBpm').textContent = e.bpm; $('bpmSlider').value = e.bpm; showToast('速度加到 ' + e.bpm + ' BPM'); continue; }
+      due = e;
+    }
     if (!due) return;
-    if (due.gap) { showGap(due.gap); return; }
     if (due.groove) { hideGap(); lightGroove(due.step); }
     else light(due.beat, due.sub);
   }
@@ -536,6 +612,13 @@
     }
     out = ctx.createGain();
     out.connect(ctx.destination);
+    gate = ctx.createGain();                 // 随机静音用：整小节把它关到 0
+    gate.connect(out);
+    clickBus = ctx.createGain(); clickBus.connect(gate);
+    drumBus = ctx.createGain(); drumBus.connect(gate);
+    applyVolumes();
+    barNo = 0; passNo = 0; lastMuted = false;
+    trainFrom = s.train.on ? s.bpm : null;
     playing = true;
     pos = { beat: 0, sub: 0 };
     gstep = 0;
@@ -544,7 +627,7 @@
     startCountIn();
     tick();
     schedTimer = setInterval(tick, 25);
-    drainTimer = setInterval(drain, 15);
+    drainTimer = setInterval(drain, 8);
     acquireWake();
     renderPlay();
   }
@@ -556,6 +639,13 @@
     queue = [];
     endCountIn();
     hideGap();
+    $('muteBar').hidden = true;
+    if (trainFrom !== null && s.bpm !== trainFrom) {
+      showToast('这次从 ' + trainFrom + ' 加到了 ' + s.bpm + ' BPM，速度已恢复到 ' + trainFrom, 4500);
+      s.bpm = trainFrom;
+      renderValues();
+    }
+    trainFrom = null;
     clearLit();
     lightGroove(-1);
     releaseWake();
@@ -747,7 +837,33 @@
   function renderAll() { renderValues(); renderBeats(); renderChips(); }
 
   // ---------- controls ----------
-  function setBpm(v) { s.bpm = clamp(v, LIMITS.bpm); save(); renderValues(); }
+  function tempoKey() {
+    if (s.mode === 'metro') return 'm';
+    if (s.mode === 'groove') return 'g:' + s.groove;
+    if (s.mode === 'pad') return 'p:' + s.pad;
+    if (s.mode === 'combo') return 'c:' + (s.curMine || '_');
+    return null;
+  }
+  function setBpm(v) {
+    s.bpm = clamp(v, LIMITS.bpm);
+    trainFrom = null;                              // 播放中手动调了速度：停下时不再恢复
+    const k = tempoKey();
+    if (k) { delete s.tempos[k]; s.tempos[k] = s.bpm; const ks = Object.keys(s.tempos); if (ks.length > 200) delete s.tempos[ks[0]]; }
+    save(); renderValues();
+  }
+  // 换到另一个练习时，用它上次的速度（没练过就保持当前速度）
+  function recallTempo() {
+    const k = tempoKey();
+    if (k && Number.isFinite(s.tempos[k]) && s.tempos[k] !== s.bpm) { s.bpm = s.tempos[k]; renderValues(); save(); }
+  }
+  let toastTimer = null;
+  function showToast(msg, ms) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, ms || 2200);
+  }
   function setKey(key, v) {
     const before = s[key];
     s[key] = clamp(v, LIMITS[key]);
@@ -895,6 +1011,7 @@
     if (playing) stop();
     s.mode = btn.dataset.mode;
     save();
+    recallTempo();
     applyMode();
   });
   $('gList').addEventListener('click', (e) => {
@@ -902,6 +1019,7 @@
     if (!item) return;
     s.groove = item.dataset.id;
     save();
+    recallTempo();
     renderGroove();
     renderGrooveList();
   });
@@ -1152,6 +1270,7 @@
     if (!item) return;
     s.pad = item.dataset.id;
     save();
+    recallTempo();
     renderPad();
     renderPadList();
   });
@@ -1387,8 +1506,10 @@
     while (nextTime < horizon) {
       if (gstep >= c.total) {
         gstep = 0;
-        if (s.gap > 0) { scheduleGap(); continue; }      // 一遍打完：先给几拍预备，再接下一遍
+        if (s.gap > 0) { unmuteAt(nextTime); scheduleGap(); continue; }      // 一遍打完：先给几拍预备，再接下一遍
       }
+      if (gstep === 0) onPass(nextTime);
+      if (gstep % BAR === 0) onBar(nextTime);
       if (c.hits.has(gstep)) snare(nextTime, 0.9);
       if (s.cclick && gstep % 12 === 0) tone(nextTime, gstep % BAR === 0 ? 0 : 1, 0.45);
       queue.push({ t: nextTime, groove: true, step: gstep });
@@ -1553,6 +1674,7 @@
     s.combo = nextSeq;
     if (opts && 'cur' in opts) s.curMine = opts.cur;
     comboChanged();
+    if (opts && 'cur' in opts) recallTempo();
   }
   let flashTimer = null;
   function flash(msg) {
@@ -1966,11 +2088,43 @@
     $('avVal').textContent = `${s.avOffset > 0 ? '+' : ''}${s.avOffset} ms`;
     const auto = Math.round(autoLatency() * 1000);
     $('avTip').textContent = (ctx ? `设备报告的输出延迟 ${auto} ms，已自动补偿。` : '开始播放后会显示设备报告的输出延迟，并自动补偿。') +
-      '如果高亮比声音早，把数值调大；比声音晚，调小。';
+      '高亮比声音晚：往左拖（变成负数）；高亮比声音早：往右拖。边播放边拖，马上生效。';
   }
   $('cdSec').value = String(s.cdSec);
   $('cdSec').addEventListener('change', (e) => { s.cdSec = Number(e.target.value); save(); });
   $('gapBeats').value = String(s.gap);
+  function renderTrain() {
+    const t = s.train;
+    $('trOn').checked = t.on;
+    $('trEvery').value = String(t.every);
+    $('trStep').value = String(t.step);
+    $('trMax').value = String(t.max);
+    $('trMute').value = String(t.mute);
+    $('trBody').classList.toggle('off', !t.on);
+    const parts = [];
+    if (t.on) parts.push('渐进加速：每 ' + t.every + ' 遍 +' + t.step + '，最高 ' + t.max);
+    if (t.mute) parts.push('随机静音：' + ['', '少', '中', '多'][t.mute]);
+    $('trainTag').textContent = parts.join(' · ');
+    $('trainTag').hidden = !parts.length;
+  }
+  renderTrain();
+  const setTrain = (p) => { s.train = normTrain(Object.assign({}, s.train, p)); save(); renderTrain(); };
+  $('trOn').addEventListener('change', (e) => setTrain({ on: e.target.checked }));
+  $('trEvery').addEventListener('change', (e) => setTrain({ every: Number(e.target.value) }));
+  $('trStep').addEventListener('change', (e) => setTrain({ step: Number(e.target.value) }));
+  $('trMax').addEventListener('change', (e) => setTrain({ max: Number(e.target.value) }));
+  $('trMute').addEventListener('change', (e) => setTrain({ mute: Number(e.target.value) }));
+  function renderVol() {
+    $('volClick').value = s.volClick; $('volClickVal').textContent = s.volClick + '%';
+    $('volDrum').value = s.volDrum; $('volDrumVal').textContent = s.volDrum + '%';
+  }
+  renderVol();
+  const volChanged = () => { save(); renderVol(); applyVolumes(); if (window.SongUI && window.SongUI.prefsChanged) window.SongUI.prefsChanged(); };
+  $('volClick').addEventListener('input', (e) => { s.volClick = Number(e.target.value); volChanged(); });
+  $('volDrum').addEventListener('input', (e) => { s.volDrum = Number(e.target.value); volChanged(); });
+  const renderAccent = () => { $('accent').checked = s.accent; document.body.classList.toggle('no-accent', !s.accent); };
+  renderAccent();
+  $('accent').addEventListener('change', (e) => { s.accent = e.target.checked; save(); renderAccent(); });
   $('gapBeats').addEventListener('change', (e) => { s.gap = Number(e.target.value); save(); });
   $('countdown').addEventListener('click', () => { if (playing) stop(); });
   $('avSlider').addEventListener('input', (e) => { s.avOffset = Number(e.target.value); save(); renderAv(); });
@@ -1985,7 +2139,7 @@
   // Android Chrome 允许在全屏下锁定方向；iOS Safari 不支持，只能提示用系统的“自动旋转”
   let landscape = false;
   function renderRot() {
-    ['scoreRot', 'songRot'].forEach((id) => { const b = $(id); if (b) b.textContent = landscape ? '↺ 竖屏' : '⟳ 横屏'; });
+    ['scoreRot', 'songFullRot'].forEach((id) => { const b = $(id); if (b) b.textContent = landscape ? '↺ 竖屏' : '⟳ 横屏'; });
   }
   function releaseLandscape() {
     if (!landscape) return;
@@ -2009,14 +2163,21 @@
     renderRot();
   }
   document.addEventListener('fullscreenchange', () => { if (landscape && !document.fullscreenElement) releaseLandscape(); });
-  ['scoreRot', 'songRot'].forEach((id) => { const b = $(id); if (b) b.addEventListener('click', toggleLandscape); });
-  window.AppOrient = { release: releaseLandscape };
+  $('scoreRot').addEventListener('click', toggleLandscape);
+  window.AppOrient = { release: releaseLandscape, toggle: toggleLandscape, lock: () => (landscape ? Promise.resolve() : toggleLandscape()) };
 
   // ---------- 云同步桥：给 js/sync.js 用 ----------
   // export 只交出可同步的内容；apply 收到合并结果后逐项校验再采用，坏数据不会进来
   const bool = (v, d) => (typeof v === 'boolean' ? v : d);
   const oneOf = (v, list, d) => (list.includes(v) ? v : d);
-  window.SongBridge = { mode: () => s.mode, countIn: () => s.cdSec > 0 };
+  window.SongBridge = {
+    mode: () => s.mode,
+    countIn: () => s.cdSec > 0,
+    volumes: () => ({ click: s.volClick / 100, drum: s.volDrum / 100 }),
+    avDelayMs: () => Math.max(0, s.avOffset),
+    pref: () => s.songPref,
+    setPref: (p) => { s.songPref = normSongPref(Object.assign({}, s.songPref, p)); save(); }
+  };
   window.SyncBridge = {
     changed() {},
     isPlaying: () => playing,
@@ -2040,6 +2201,10 @@
         s.ctab = oneOf(v.ctab, ['long', 'six', 'trip', 'sync'], s.ctab);
         s.cdSec = oneOf(v.cdSec, [0, 3, 4, 6, 8], s.cdSec);
         s.gap = oneOf(v.gap, [0, 2, 4], s.gap);
+        s.accent = bool(v.accent, s.accent);
+        if (v.train) s.train = normTrain(v.train);
+        if (v.tempos) s.tempos = normTempos(v.tempos);
+        if (v.songPref) s.songPref = normSongPref(v.songPref);
         s.rbars = oneOf(v.rbars, [2, 4, 6, 8], s.rbars);
         s.rdiff = oneOf(v.rdiff, ['basic', 'adv', 'trip'], s.rdiff);
         if (typeof v.groove === 'string') s.groove = v.groove;
@@ -2057,6 +2222,9 @@
       } finally { applyingRemote = false; }
       $('cdSec').value = String(s.cdSec);
       $('gapBeats').value = String(s.gap);
+      $('accent').checked = s.accent; document.body.classList.toggle('no-accent', !s.accent);
+      renderTrain();
+      if (window.SongUI && window.SongUI.prefsChanged) window.SongUI.prefsChanged();
       renderAll(); renderPlay(); applyMode();
       if (!$('score').hidden) renderScore();
       return true;
