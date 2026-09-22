@@ -71,11 +71,25 @@
     return list;
   }
 
-  const clamp = (v, [lo, hi]) => Math.min(hi, Math.max(lo, Math.round(v)));
+  const clamp = (v, [lo, hi], fallback = lo) => Number.isFinite(v) ? Math.min(hi, Math.max(lo, Math.round(v))) : fallback;
   // 云同步：这些设置项各自记“最后修改时间”，跨设备时谁最后改的谁生效。
   // 声画延迟校准（avOffset）、撤销历史（hist）是每台设备自己的，不同步。
   const SYNC_KEYS = ['bpm', 'beats', 'subdiv', 'ticks', 'cells', 'groove', 'gclick', 'pad', 'pclick',
     'combo', 'ctab', 'cclick', 'rbars', 'rdiff', 'curMine', 'cdSec', 'dtext', 'gap', 'accent', 'train', 'tempos', 'songPref'];
+  // 复用 stamps 保存逐练习时间戳；保留原来的整组时间戳供旧版读取。
+  const entryStampKey = (group, key) => '@' + group + '/' + encodeURIComponent(key);
+  function fieldEntries(group, value) {
+    const out = Object.create(null);
+    if (!value || typeof value !== 'object') return out;
+    if (group === 'tempos') Object.keys(value).forEach((k) => { if (Number.isFinite(value[k])) out[k] = value[k]; });
+    if (group === 'songPref') {
+      ['click', 'drums', 'band', 'loop'].forEach((k) => { if (typeof value[k] === 'boolean') out[k] = value[k]; });
+      if (value.speeds && typeof value.speeds === 'object') Object.keys(value.speeds).forEach((k) => {
+        if (Number.isFinite(value.speeds[k])) out['speed:' + k] = value.speeds[k];
+      });
+    }
+    return out;
+  }
   function normTrain(t) {
     t = t && typeof t === 'object' ? t : {};
     const pick = (v, list, d) => (list.includes(v) ? v : d);
@@ -104,9 +118,9 @@
   // 升级前就存在的旧数据没有时间戳：记成 1，比“全新设备(0)”新，但比任何新改动旧
   const legacyStamps = Object.keys(saved).length > 0 && !saved.stamps;
   const s = {
-    bpm: clamp(saved.bpm || 100, LIMITS.bpm),
-    beats: clamp(saved.beats || 4, LIMITS.beats),
-    subdiv: clamp(saved.subdiv || 1, LIMITS.subdiv),
+    bpm: clamp(saved.bpm, LIMITS.bpm, 100),
+    beats: clamp(saved.beats, LIMITS.beats, 4),
+    subdiv: clamp(saved.subdiv, LIMITS.subdiv, 1),
     ticks: saved.ticks !== false,
     mode: ['groove', 'pad', 'combo', 'song'].includes(saved.mode) ? saved.mode : 'metro',
     combo: Array.isArray(saved.combo) ? saved.combo : null,
@@ -143,13 +157,25 @@
   s.cells = Array.from({ length: s.beats }, (_, i) => (saved.cells && validCell(saved.cells[i]) ? saved.cells[i] : zeros()));
   const snap = {};
   SYNC_KEYS.forEach((k) => { snap[k] = JSON.stringify(s[k]); });
+  ['tempos', 'songPref'].forEach((group) => Object.keys(fieldEntries(group, s[group])).forEach((key) => {
+    const stamp = entryStampKey(group, key);
+    if (!Number.isFinite(s.stamps[stamp])) s.stamps[stamp] = Number.isFinite(s.stamps[group]) ? s.stamps[group] : 0;
+  }));
   let applyingRemote = false;
   const save = () => {
     if (!applyingRemote) {
       const now = Date.now();
       SYNC_KEYS.forEach((k) => {
         const j = JSON.stringify(s[k]);
-        if (j !== snap[k]) { snap[k] = j; s.stamps[k] = now; }
+        if (j !== snap[k]) {
+          if (k === 'tempos' || k === 'songPref') {
+            const before = fieldEntries(k, JSON.parse(snap[k] || '{}')), after = fieldEntries(k, s[k]);
+            new Set([...Object.keys(before), ...Object.keys(after)]).forEach((key) => {
+              if (before[key] !== after[key]) s.stamps[entryStampKey(k, key)] = now;
+            });
+          }
+          snap[k] = j; s.stamps[k] = now;
+        }
       });
     }
     try { localStorage.setItem(STORE_KEY, JSON.stringify(s)); } catch (e) { /* ignore */ }
@@ -160,6 +186,53 @@
   let clickBus = null, drumBus = null, gate = null;
   let playing = false, nextTime = 0, pos = { beat: 0, sub: 0 }, queue = [];
   let blocks = [], dots = [], lit = null, wake = null, tapTimes = [];
+  let starting = false, startGeneration = 0;
+  // 保存的 BPM 与本次渐进加速分开；音频排程可领先画面几秒，不能提前改掉用户设置。
+  let audioBpm = s.bpm, shownBpm = s.bpm, checkpoints = [], extraHorizon = null;
+  let countLeft = 0, countIndex = 0, gapLeft = 0, gapIndex = 0;
+  const sources = new Map();
+  const AUDIO_LEAD = 0.005;
+  const busyPlaying = () => playing || starting || !!(window.SongUI && window.SongUI.playing());
+
+  function trackSource(node, t) {
+    sources.set(node, t);
+    node.onended = () => { sources.delete(node); node.disconnect(); };
+  }
+  function cancelSources(from = -Infinity) {
+    sources.forEach((t, node) => {
+      if (t < from) return;
+      try { node.stop(); } catch (e) { /* 音源可能已经结束 */ }
+      node.disconnect();
+      sources.delete(node);
+    });
+  }
+  function rememberBeat() {
+    if (checkpoints.length && checkpoints[checkpoints.length - 1].t === nextTime) return;
+    checkpoints.push({ t: nextTime, pos: { ...pos }, gstep, barNo, passNo, lastMuted, audioBpm,
+      countLeft, countIndex, gapLeft, gapIndex });
+  }
+  // 保留已经发声的部分，在下一个尚未发声的正拍撤销旧音源，并恢复该拍之前的排程状态。
+  function rewindAtBeat() {
+    if (!playing) return;
+    tick();
+    if (!playing) return;
+    const earliest = ctx.currentTime + 0.02;
+    let point = checkpoints.find((p) => p.t >= earliest);
+    if (!point) {
+      extraHorizon = Math.max(nextTime, earliest) + 60 / audioBpm + 0.001;
+      try { scheduleCurrent(); } finally { extraHorizon = null; }
+      point = checkpoints.find((p) => p.t >= earliest);
+    }
+    if (!point) return;
+    cancelSources(point.t);
+    queue = queue.filter((e) => e.t < point.t);
+    checkpoints = checkpoints.filter((p) => p.t < point.t);
+    nextTime = point.t; pos = { ...point.pos }; gstep = point.gstep;
+    barNo = point.barNo; passNo = point.passNo; lastMuted = point.lastMuted; audioBpm = point.audioBpm;
+    countLeft = point.countLeft; countIndex = point.countIndex; gapLeft = point.gapLeft; gapIndex = point.gapIndex;
+    gate.gain.cancelScheduledValues(point.t);
+    gate.gain.setValueAtTime(lastMuted ? 0 : 1, point.t);
+  }
 
   // ---------- audio: scheduled ahead on the AudioContext clock ----------
   const CLICK = [
@@ -169,6 +242,7 @@
     { type: 'triangle', freq: 520, gain: 0.85, dur: 0.09 } // 3 rhythm-pattern hit
   ];
   function tone(time, kind, vol = 1) {
+    if (time < ctx.currentTime + AUDIO_LEAD) return; // 过期音符只推进位置，不补播
     if (kind === 0 && !s.accent) kind = 1;       // 关掉重音时，第一拍和其他拍用同一个声音
     const c = CLICK[kind];
     const osc = ctx.createOscillator();
@@ -178,6 +252,7 @@
     g.gain.setValueAtTime(c.gain * vol, time);
     g.gain.exponentialRampToValueAtTime(0.001, time + c.dur);
     osc.connect(g).connect(kind === 3 ? drumBus : clickBus);
+    trackSource(osc, time);
     osc.start(time);
     osc.stop(time + c.dur + 0.02);
   }
@@ -197,39 +272,54 @@
     // 第一小节永远出声；不连续静音两小节，免得完全找不到拍子
     const muted = p > 0 && barNo > 1 && !lastMuted && Math.random() < p;
     if (muted !== lastMuted) {
-      gate.gain.setValueAtTime(muted ? 0 : 1, t);
+      gate.gain.setValueAtTime(muted ? 0 : 1, Math.max(t, ctx.currentTime));
       queue.push({ t, mute: muted });
     }
     lastMuted = muted;
   }
   function unmuteAt(t) {
     if (!lastMuted) return;
-    gate.gain.setValueAtTime(1, t);
+    gate.gain.setValueAtTime(1, Math.max(t, ctx.currentTime));
     queue.push({ t, mute: false });
     lastMuted = false;
   }
   function onPass(t) {
     passNo++;
     const tr = s.train;
-    if (!tr.on || passNo <= 1 || (passNo - 1) % tr.every !== 0 || s.bpm >= tr.max) return;
-    s.bpm = Math.min(tr.max, s.bpm + tr.step);          // 从这一遍开始按新速度排
-    queue.push({ t, bpm: s.bpm });
+    if (!tr.on || passNo <= 1 || (passNo - 1) % tr.every !== 0 || audioBpm >= tr.max) return;
+    audioBpm = Math.min(tr.max, audioBpm + tr.step);
+    queue.push({ t, bpm: audioBpm, trained: true });
   }
 
   // 前台 0.12 秒；后台时定时器会被系统降速，多排几秒，靠音频时钟继续准点出声
   const lookahead = () => (document.hidden ? 4 : 0.12);
+  const horizonTime = () => extraHorizon === null ? ctx.currentTime + lookahead() : extraHorizon;
+
+  function scheduleCountIn(horizon) {
+    while (countLeft > 0 && nextTime < horizon) {
+      rememberBeat();
+      queue.push({ t: nextTime, bpm: audioBpm });
+      tone(nextTime, countLeft === 4 ? 0 : 1, 0.85);
+      countLeft--; countIndex++;
+      nextTime += 60 / audioBpm;
+    }
+    return countLeft === 0;
+  }
 
   function schedule() {
-    const horizon = ctx.currentTime + lookahead();
+    const horizon = horizonTime();
+    if (!scheduleCountIn(horizon)) return;
     while (nextTime < horizon) {
       if (pos.beat >= s.beats) pos.beat = 0;
       if (pos.sub >= s.subdiv) pos.sub = 0;
+      if (pos.sub === 0) rememberBeat();
       if (pos.beat === 0 && pos.sub === 0) { onPass(nextTime); onBar(nextTime); }
+      if (pos.sub === 0) queue.push({ t: nextTime, bpm: audioBpm });
       if (pos.sub === 0) tone(nextTime, pos.beat === 0 ? 0 : 1);
       else if (s.ticks) tone(nextTime, 2);
       if (s.cells[pos.beat] && s.cells[pos.beat][pos.sub] === '1') tone(nextTime, 3);
       queue.push({ t: nextTime, beat: pos.beat, sub: pos.sub });
-      nextTime += 60 / s.bpm / s.subdiv;
+      nextTime += 60 / audioBpm / s.subdiv;
       if (++pos.sub >= s.subdiv) {
         pos.sub = 0;
         if (++pos.beat >= s.beats) pos.beat = 0;
@@ -302,6 +392,7 @@
 
   let noiseBuf = null, gstep = 0;
   function kick(t) {
+    if (t < ctx.currentTime + AUDIO_LEAD) return;
     const o = ctx.createOscillator(), g = ctx.createGain();
     o.type = 'sine';
     o.frequency.setValueAtTime(160, t);
@@ -309,9 +400,11 @@
     g.gain.setValueAtTime(1, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
     o.connect(g).connect(drumBus);
+    trackSource(o, t);
     o.start(t); o.stop(t + 0.35);
   }
   function noiseHit(t, hp, gain, dur) {
+    if (t < ctx.currentTime + AUDIO_LEAD) return;
     const src = ctx.createBufferSource();
     src.buffer = noiseBuf;
     const f = ctx.createBiquadFilter();
@@ -320,16 +413,19 @@
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
     src.connect(f).connect(g).connect(drumBus);
+    trackSource(src, t);
     src.start(t, Math.random() * 0.5);
     src.stop(t + dur + 0.02);
   }
   function snare(t, vol = 1) {
+    if (t < ctx.currentTime + AUDIO_LEAD) return;
     noiseHit(t, 1500, 0.7 * vol, 0.16);
     const o = ctx.createOscillator(), g = ctx.createGain();
     o.type = 'triangle'; o.frequency.value = 190;
     g.gain.setValueAtTime(0.45 * vol, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
     o.connect(g).connect(drumBus);
+    trackSource(o, t);
     o.start(t); o.stop(t + 0.12);
   }
   const hat = (t, open) => noiseHit(t, 7000, open ? 0.35 : 0.3, open ? 0.28 : 0.05);
@@ -337,18 +433,21 @@
   function scheduleGroove() {
     const g = GROOVES.find((x) => x.id === s.groove) || GROOVES[0];
     const total = g.beats * g.spb;
-    const horizon = ctx.currentTime + lookahead();
+    const horizon = horizonTime();
+    if (!scheduleCountIn(horizon)) return;
     while (nextTime < horizon) {
       if (gstep >= total) gstep = 0;
       const t = nextTime;
+      if (gstep % g.spb === 0) rememberBeat();
       if (gstep === 0) { onPass(t); onBar(t); }
+      if (gstep % g.spb === 0) queue.push({ t, bpm: audioBpm });
       if (g.hh.includes(gstep)) hat(t, false);
       if (g.hho && g.hho.includes(gstep)) hat(t, true);
       if (g.sn.includes(gstep)) snare(t);
       if (g.bd.includes(gstep)) kick(t);
       if (s.gclick && gstep % g.spb === 0) tone(t, gstep === 0 ? 0 : 1, 0.45);
       queue.push({ t, groove: true, step: gstep });
-      nextTime += 60 / s.bpm / g.spb;
+      nextTime += 60 / audioBpm / g.spb;
       gstep++;
     }
   }
@@ -463,27 +562,40 @@
   function schedulePad() {
     const ex = PADS.find((x) => x.id === s.pad) || PADS[0];
     const total = ex.beats * ex.spb;
-    const horizon = ctx.currentTime + lookahead();
+    const horizon = horizonTime();
+    if (!scheduleCountIn(horizon)) return;
     while (nextTime < horizon) {
       if (gstep >= total) gstep = 0;
+      if (gstep % ex.spb === 0) rememberBeat();
       if (gstep === 0) { onPass(nextTime); onBar(nextTime); }
+      if (gstep % ex.spb === 0) queue.push({ t: nextTime, bpm: audioBpm });
       const hit = ex.hits[gstep];
       if (hit) snare(nextTime, hit.a ? 1 : 0.62);
       if (s.pclick && gstep % ex.spb === 0) tone(nextTime, gstep === 0 ? 0 : 1, 0.45);
       queue.push({ t: nextTime, groove: true, step: gstep });
-      nextTime += 60 / s.bpm / ex.spb;
+      nextTime += 60 / audioBpm / ex.spb;
       gstep++;
     }
   }
 
   function lightGroove(step) { moveScoreCursor(step); }
 
-  const tick = () => {
-    if (playing && ctx && nextTime < ctx.currentTime - 0.25) nextTime = ctx.currentTime + 0.05;   // 被挂起后恢复：重新对齐，避免一口气补播
+  function scheduleCurrent() {
     if (s.mode === 'groove') scheduleGroove();
     else if (s.mode === 'pad') schedulePad();
     else if (s.mode === 'combo') scheduleCombo();
     else schedule();
+  }
+  const tick = () => {
+    if (!playing || !ctx) return;
+    // 短中断沿原时间轴跳过错过的拍；长中断明确停止，避免假装连续练习或大量追赶。
+    if (ctx.currentTime - nextTime > 30) {
+      stop();
+      showToast('播放中断较久，已停止。请重新开始。', 4500);
+      return;
+    }
+    checkpoints = checkpoints.filter((p) => p.t >= ctx.currentTime - 0.5);
+    scheduleCurrent();
   };
 
   // UI follows the audio clock via setInterval (rAF can stall when a tab isn't painting)
@@ -497,14 +609,14 @@
   let countStart = 0, countEnd = null, countSec = 0;
   function startCountIn() {
     countEnd = null;
+    countLeft = 0; countIndex = 0;
     if (!s.cdSec) return;
-    const beatSec = 60 / s.bpm;
+    const beatSec = 60 / audioBpm;
     const n = Math.max(4, Math.ceil(s.cdSec / beatSec - 1e-9));   // 至少 s.cdSec 秒，且总拍数取整
-    for (let i = 0; i < n; i++) tone(nextTime + i * beatSec, i === n - 4 ? 0 : 1, 0.85);   // 最后 4 拍的第 1 拍重音
+    countLeft = n;
     countStart = nextTime;
     countEnd = nextTime + n * beatSec;
     countSec = s.cdSec;
-    nextTime = countEnd;                                            // 真正的练习从这里开始
     $('cdNum').textContent = countSec;
     $('countdown').hidden = false;
   }
@@ -529,7 +641,12 @@
       const e = queue.shift();
       if (e.gap) { showGap(e.gap); due = null; continue; }
       if ('mute' in e) { $('muteBar').hidden = !e.mute; continue; }
-      if (e.bpm) { $('bpm').textContent = e.bpm; $('scoreBpm').textContent = e.bpm; $('bpmSlider').value = e.bpm; showToast('速度加到 ' + e.bpm + ' BPM'); continue; }
+      if (e.bpm) {
+        shownBpm = e.bpm;
+        $('bpm').textContent = e.bpm; $('scoreBpm').textContent = e.bpm; $('bpmSlider').value = e.bpm;
+        if (e.trained && now - e.t < 0.15) showToast('速度加到 ' + e.bpm + ' BPM');
+        continue;
+      }
       due = e;
     }
     if (!due) return;
@@ -598,13 +715,24 @@
 
   // ---------- transport ----------
   async function start() {
+    if (playing || starting) return;
     if (s.mode === 'combo' && !s.combo.length) {
       $('cHint').textContent = '先从下面选几个时值放进来，再点开始';
       return;
     }
-    KeepAlive.on(`${MODE_TITLE[s.mode] || '节拍器'} · ${s.bpm} BPM`);   // 必须在点击的同一时刻启动，否则手机浏览器不放行
-    if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-    await ctx.resume();
+    starting = true;
+    const generation = ++startGeneration;
+    renderPlay();
+    try {
+      KeepAlive.on(`${MODE_TITLE[s.mode] || '节拍器'} · ${s.bpm} BPM`);
+      if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+      await ctx.resume();
+    } catch (e) {
+      if (generation === startGeneration) { stop(); showToast('声音未能启动，请再点一次开始。'); }
+      return;
+    }
+    if (generation !== startGeneration || !starting) return;
+    starting = false;
     if (!noiseBuf) {
       noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
       const d = noiseBuf.getChannelData(0);
@@ -619,10 +747,12 @@
     applyVolumes();
     barNo = 0; passNo = 0; lastMuted = false;
     trainFrom = s.train.on ? s.bpm : null;
+    audioBpm = shownBpm = s.bpm;
     playing = true;
     pos = { beat: 0, sub: 0 };
     gstep = 0;
     queue = [];
+    checkpoints = []; gapLeft = 0; gapIndex = 0;
     nextTime = ctx.currentTime + 0.08;
     startCountIn();
     tick();
@@ -632,19 +762,24 @@
     renderPlay();
   }
   function stop() {
+    ++startGeneration;
+    starting = false;
     playing = false;
     clearInterval(schedTimer);
     clearInterval(drainTimer);
+    schedTimer = drainTimer = null;
+    cancelSources();
     if (out) { out.disconnect(); out = null; }   // silences sounds already scheduled ahead
     queue = [];
+    checkpoints = []; countLeft = 0; gapLeft = 0;
     endCountIn();
     hideGap();
     $('muteBar').hidden = true;
-    if (trainFrom !== null && s.bpm !== trainFrom) {
-      showToast('这次从 ' + trainFrom + ' 加到了 ' + s.bpm + ' BPM，速度已恢复到 ' + trainFrom, 4500);
-      s.bpm = trainFrom;
-      renderValues();
+    if (trainFrom !== null && shownBpm !== trainFrom) {
+      showToast('这次从 ' + trainFrom + ' 加到了 ' + shownBpm + ' BPM，速度已恢复到 ' + s.bpm, 4500);
     }
+    audioBpm = shownBpm = s.bpm;
+    renderValues();
     trainFrom = null;
     clearLit();
     lightGroove(-1);
@@ -655,14 +790,25 @@
   }
 
   async function acquireWake() {
-    try { if ('wakeLock' in navigator) wake = await navigator.wakeLock.request('screen'); } catch (e) { /* ignore */ }
+    const generation = startGeneration;
+    try {
+      if (!('wakeLock' in navigator)) return;
+      const lock = await navigator.wakeLock.request('screen');
+      if (!playing || generation !== startGeneration) { lock.release().catch(() => {}); return; }
+      if (wake && !wake.released) { lock.release().catch(() => {}); return; }
+      wake = lock;
+      lock.addEventListener('release', () => { if (wake === lock) wake = null; });
+    } catch (e) { /* ignore */ }
   }
   function releaseWake() {
     if (wake) { wake.release().catch(() => {}); wake = null; }
   }
   document.addEventListener('visibilitychange', () => {
     if (!playing) return;
-    if (document.visibilityState === 'visible' && !wake) acquireWake();
+    if (document.visibilityState === 'visible') {
+      if (!wake || wake.released) acquireWake();
+      rewindAtBeat(); // 回前台收回后台的长排程，保留原来的正拍位置
+    }
     if (ctx && ctx.state !== 'running') ctx.resume().catch(() => {});   // 被系统挂起过就叫醒
     tick();                                                              // 切前后台时立刻按新的前瞻长度补排
   });
@@ -670,16 +816,16 @@
   // ---------- render ----------
   function renderPlay() {
     const b = $('play');
-    b.textContent = playing ? '■ 停止' : '▶ 开始';
-    b.classList.toggle('running', playing);
+    b.textContent = starting ? '■ 取消启动' : playing ? '■ 停止' : '▶ 开始';
+    b.classList.toggle('running', playing || starting);
     const sp = $('scorePlay');
     sp.textContent = b.textContent;
-    sp.classList.toggle('running', playing);
+    sp.classList.toggle('running', playing || starting);
   }
   function renderValues() {
-    $('bpm').textContent = s.bpm;
-    $('scoreBpm').textContent = s.bpm;
-    $('bpmSlider').value = s.bpm;
+    $('bpm').textContent = playing ? shownBpm : s.bpm;
+    $('scoreBpm').textContent = playing ? shownBpm : s.bpm;
+    $('bpmSlider').value = playing ? shownBpm : s.bpm;
     $('beatsVal').textContent = s.beats;
     $('subdivVal').textContent = s.subdiv;
     $('subdivHint').textContent = SUB_NAMES[s.subdiv];
@@ -845,7 +991,16 @@
     return null;
   }
   function setBpm(v) {
-    s.bpm = clamp(v, LIMITS.bpm);
+    if (!Number.isFinite(v)) return;
+    rewindAtBeat();
+    s.bpm = clamp(v, LIMITS.bpm, s.bpm);
+    audioBpm = shownBpm = s.bpm;
+    passNo = 0; // 手动调速后，从新速度重新累计完整的练习遍数
+    if (playing) {
+      queue.push({ t: nextTime, bpm: s.bpm });
+      if (countLeft > 0) countEnd = nextTime + countLeft * 60 / audioBpm;
+      tick();
+    }
     trainFrom = null;                              // 播放中手动调了速度：停下时不再恢复
     const k = tempoKey();
     if (k) { delete s.tempos[k]; s.tempos[k] = s.bpm; const ks = Object.keys(s.tempos); if (ks.length > 200) delete s.tempos[ks[0]]; }
@@ -854,7 +1009,7 @@
   // 换到另一个练习时，用它上次的速度（没练过就保持当前速度）
   function recallTempo() {
     const k = tempoKey();
-    if (k && Number.isFinite(s.tempos[k]) && s.tempos[k] !== s.bpm) { s.bpm = s.tempos[k]; renderValues(); save(); }
+    if (k && Number.isFinite(s.tempos[k]) && s.tempos[k] !== s.bpm) setBpm(s.tempos[k]);
   }
   let toastTimer = null;
   function showToast(msg, ms) {
@@ -866,28 +1021,35 @@
   }
   function setKey(key, v) {
     const before = s[key];
-    s[key] = clamp(v, LIMITS[key]);
-    if (s[key] === before) return;
+    const next = clamp(v, LIMITS[key], before);
+    if (next === before) return;
+    rewindAtBeat();
+    s[key] = next;
     if (key === 'subdiv') {
       s.cells = Array.from({ length: s.beats }, zeros);      // patterns don't carry across resolutions
     } else {
       const last = s.cells[s.cells.length - 1] || zeros();
       s.cells = Array.from({ length: s.beats }, (_, i) => s.cells[i] || last);
     }
+    if (playing) tick();
     save(); renderAll();
   }
   function applyAll(bits) {
+    rewindAtBeat();
     s.cells = Array.from({ length: s.beats }, () => bits);
+    if (playing) tick();
     save(); renderBeats(); renderChips();
   }
   function applyBeat(beat, bits) {
+    rewindAtBeat();
     s.cells[beat] = bits;
+    if (playing) tick();
     save(); renderBeats(); renderChips();
   }
 
   $('bpmSlider').addEventListener('input', (e) => setBpm(Number(e.target.value)));
   document.querySelectorAll('[data-bpm]').forEach((btn) =>
-    btn.addEventListener('click', () => setBpm(s.bpm + Number(btn.dataset.bpm))));
+    btn.addEventListener('click', () => setBpm((playing ? shownBpm : s.bpm) + Number(btn.dataset.bpm))));
   document.querySelectorAll('[data-key]').forEach((btn) =>
     btn.addEventListener('click', () => setKey(btn.dataset.key, s[btn.dataset.key] + Number(btn.dataset.d))));
   $('ticks').addEventListener('change', (e) => { s.ticks = e.target.checked; save(); });
@@ -931,7 +1093,7 @@
 
   $('play').addEventListener('click', () => {
     if (s.mode === 'song') { if (window.SongUI) window.SongUI.toggle(); return; }
-    if (playing) stop(); else start();
+    if (playing || starting) stop(); else start();
   });
 
   // ---------- 基础节奏界面 ----------
@@ -1008,7 +1170,7 @@
   $('seg').addEventListener('click', (e) => {
     const btn = e.target.closest('button');
     if (!btn || btn.dataset.mode === s.mode) return;
-    if (playing) stop();
+    if (playing || starting) stop();
     s.mode = btn.dataset.mode;
     save();
     recallTempo();
@@ -1017,7 +1179,10 @@
   $('gList').addEventListener('click', (e) => {
     const item = e.target.closest('.g-item');
     if (!item) return;
+    rewindAtBeat();
     s.groove = item.dataset.id;
+    gstep = 0;
+    if (playing) tick();
     save();
     recallTempo();
     renderGroove();
@@ -1268,7 +1433,10 @@
   $('pList').addEventListener('click', (e) => {
     const item = e.target.closest('.g-item');
     if (!item) return;
+    rewindAtBeat();
     s.pad = item.dataset.id;
+    gstep = 0;
+    if (playing) tick();
     save();
     recallTempo();
     renderPad();
@@ -1325,12 +1493,12 @@
     const out = [];
     let used = 0;
     (Array.isArray(seq) ? seq : []).forEach((f) => {
-      const ok = f && ((f.k === 'n' && NOTE_PROPS[f.d]) || (f.k === 'r' && REST_DURS.includes(f.d)) ||
+      const ok = f && ((f.k === 'n' && Number.isFinite(f.d) && Object.hasOwn(NOTE_PROPS, f.d)) || (f.k === 'r' && REST_DURS.includes(f.d)) ||
         (f.k === 'c' && typeof f.b === 'string' && /^[01]+$/.test(f.b) && (f.b.length === 3 || f.b.length === 4)));
       if (!ok) return;
       const u = figUnits(f);
       if (used + u > BAR) return;
-      out.push(f);
+      out.push(f.k === 'c' ? C(f.b) : { k: f.k, d: f.d });
       used += u;
       if (used === BAR) used = 0;
     });
@@ -1486,13 +1654,13 @@
   }
   // 每遍之间的预备拍：按当前速度“嘟(重)、嗒、嗒、嗒”，同时在屏幕上方显示 1 2 3 4
   function scheduleGap() {
-    const beatSec = 60 / s.bpm;
-    for (let i = 0; i < s.gap; i++) {
-      const t = nextTime + i * beatSec;
-      tone(t, i === 0 ? 0 : 1, 0.85);
-      queue.push({ t, gap: i + 1, of: s.gap });
-    }
-    nextTime += s.gap * beatSec;
+    rememberBeat();
+    queue.push({ t: nextTime, bpm: audioBpm });
+    unmuteAt(nextTime);
+    tone(nextTime, gapIndex === 0 ? 0 : 1, 0.85);
+    queue.push({ t: nextTime, gap: gapIndex + 1 });
+    gapLeft--; gapIndex++;
+    nextTime += 60 / audioBpm;
   }
   function showGap(n) {
     const bar = $('gapBar');
@@ -1502,18 +1670,22 @@
   function hideGap() { const b = $('gapBar'); if (b && !b.hidden) b.hidden = true; }
   function scheduleCombo() {
     const c = comboCache || comboTimeline();
-    const horizon = ctx.currentTime + lookahead();
+    const horizon = horizonTime();
+    if (!scheduleCountIn(horizon)) return;
     while (nextTime < horizon) {
       if (gstep >= c.total) {
         gstep = 0;
-        if (s.gap > 0) { unmuteAt(nextTime); scheduleGap(); continue; }      // 一遍打完：先给几拍预备，再接下一遍
+        gapLeft = s.gap; gapIndex = 0;
       }
+      if (gapLeft > 0) { scheduleGap(); continue; }
+      if (gstep % 12 === 0) rememberBeat();
       if (gstep === 0) onPass(nextTime);
       if (gstep % BAR === 0) onBar(nextTime);
+      if (gstep % 12 === 0) queue.push({ t: nextTime, bpm: audioBpm });
       if (c.hits.has(gstep)) snare(nextTime, 0.9);
       if (s.cclick && gstep % 12 === 0) tone(nextTime, gstep % BAR === 0 ? 0 : 1, 0.45);
       queue.push({ t: nextTime, groove: true, step: gstep });
-      nextTime += 60 / s.bpm / 12;
+      nextTime += 60 / audioBpm / 12;
       gstep++;
     }
   }
@@ -1601,7 +1773,7 @@
     const units = p.seq.reduce((a, f) => a + (f.k === 'c' ? 12 : f.d), 0);
     if (units % 48 !== 0) console.error('preset not whole bars', p.name, units);
   });
-  s.combo = sanitizeCombo(s.combo && s.combo.length ? s.combo : COMBO_PRESETS[0].seq);
+  s.combo = sanitizeCombo(s.combo === null ? COMBO_PRESETS[0].seq : s.combo);
   snap.combo = JSON.stringify(s.combo);   // 启动时补的默认谱不算“用户改动”，不要打时间戳
 
   // 横屏（宽度 ≥ 640）每行排 2 小节，竖屏 1 小节
@@ -1614,7 +1786,12 @@
   }
 
   function comboChanged() {
+    rewindAtBeat();
     comboCache = null;
+    if (playing && s.mode === 'combo') {
+      gstep = 0; gapLeft = 0;
+      if (s.combo.length) tick(); else stop();
+    }
     save();
     renderCombo();
   }
@@ -1701,7 +1878,15 @@
       row.className = 'g-item mine' + (m.id === s.curMine ? ' active' : '');
       row.dataset.id = m.id;
       const bars = layoutCombo(sanitizeCombo(m.seq)).rows.length;
-      row.innerHTML = `<span class="g-name">${m.name.replace(/[<>&]/g, '')}<small>${bars} 小节</small></span><span class="mine-btns"><button class="mine-exp" data-exp="${m.id}">导出</button><button class="mine-del" data-del="${m.id}" aria-label="删除">✕</button></span>`;
+      const name = document.createElement('span');
+      name.className = 'g-name'; name.textContent = m.name;
+      const count = document.createElement('small'); count.textContent = `${bars} 小节`; name.appendChild(count);
+      const buttons = document.createElement('span'); buttons.className = 'mine-btns';
+      const exp = document.createElement('button');
+      exp.className = 'mine-exp'; exp.dataset.exp = m.id; exp.textContent = '导出';
+      const del = document.createElement('button');
+      del.className = 'mine-del'; del.dataset.del = m.id; del.textContent = '✕'; del.setAttribute('aria-label', '删除');
+      buttons.append(exp, del); row.append(name, buttons);
       host.appendChild(row);
     });
   }
@@ -2078,9 +2263,9 @@
   window.addEventListener('resize', onWideChange);
   window.addEventListener('orientationchange', onWideChange);
   $('scoreClose').addEventListener('click', () => { $('score').hidden = true; if (s.mode !== 'song' && window.AppOrient) window.AppOrient.release(); });
-  $('scorePlay').addEventListener('click', () => (playing ? stop() : start()));
+  $('scorePlay').addEventListener('click', () => (playing || starting ? stop() : start()));
   document.querySelectorAll('[data-sbpm]').forEach((btn) =>
-    btn.addEventListener('click', () => setBpm(s.bpm + Number(btn.dataset.sbpm))));
+    btn.addEventListener('click', () => setBpm((playing ? shownBpm : s.bpm) + Number(btn.dataset.sbpm))));
 
   // 声画同步校准：高亮比声音早就把数值调大，蓝牙耳机通常要 150 到 250 毫秒
   function renderAv() {
@@ -2108,7 +2293,12 @@
     $('trainTag').hidden = !parts.length;
   }
   renderTrain();
-  const setTrain = (p) => { s.train = normTrain(Object.assign({}, s.train, p)); save(); renderTrain(); };
+  const setTrain = (p) => {
+    rewindAtBeat();
+    s.train = normTrain(Object.assign({}, s.train, p));
+    if (playing) tick();
+    save(); renderTrain();
+  };
   $('trOn').addEventListener('change', (e) => setTrain({ on: e.target.checked }));
   $('trEvery').addEventListener('change', (e) => setTrain({ every: Number(e.target.value) }));
   $('trStep').addEventListener('change', (e) => setTrain({ step: Number(e.target.value) }));
@@ -2126,7 +2316,7 @@
   renderAccent();
   $('accent').addEventListener('change', (e) => { s.accent = e.target.checked; save(); renderAccent(); });
   $('gapBeats').addEventListener('change', (e) => { s.gap = Number(e.target.value); save(); });
-  $('countdown').addEventListener('click', () => { if (playing) stop(); });
+  $('countdown').addEventListener('click', () => { if (playing || starting) stop(); });
   $('avSlider').addEventListener('input', (e) => { s.avOffset = Number(e.target.value); save(); renderAv(); });
   $('syncBox').addEventListener('toggle', renderAv);
 
@@ -2179,23 +2369,24 @@
     setPref: (p) => { s.songPref = normSongPref(Object.assign({}, s.songPref, p)); save(); }
   };
   window.SyncBridge = {
+    fields: { entries: fieldEntries, stampKey: entryStampKey },
     changed() {},
-    isPlaying: () => playing,
+    isPlaying: busyPlaying,
     export() {
       const v = {};
       SYNC_KEYS.forEach((k) => { v[k] = s[k]; });
       return { v: clone(v), at: Object.assign({}, s.stamps), mine: clone(s.mine), gone: clone(s.gone) };
     },
     apply(m) {
-      if (playing) return false;
+      if (busyPlaying()) return false;
       applyingRemote = true;
       const comboBefore = JSON.stringify(s.combo);
       try {
         const v = m.v || {};
-        s.beats = clamp(v.beats || s.beats, LIMITS.beats);
-        s.subdiv = clamp(v.subdiv || s.subdiv, LIMITS.subdiv);
+        s.beats = clamp(v.beats, LIMITS.beats, s.beats);
+        s.subdiv = clamp(v.subdiv, LIMITS.subdiv, s.subdiv);
         s.cells = Array.from({ length: s.beats }, (_, i) => (v.cells && validCell(v.cells[i]) ? v.cells[i] : zeros()));
-        s.bpm = clamp(v.bpm || s.bpm, LIMITS.bpm);
+        s.bpm = clamp(v.bpm, LIMITS.bpm, s.bpm);
         s.ticks = bool(v.ticks, s.ticks); s.gclick = bool(v.gclick, s.gclick);
         s.pclick = bool(v.pclick, s.pclick); s.cclick = bool(v.cclick, s.cclick);
         s.ctab = oneOf(v.ctab, ['long', 'six', 'trip', 'sync'], s.ctab);
@@ -2210,14 +2401,14 @@
         if (typeof v.groove === 'string') s.groove = v.groove;
         if (typeof v.pad === 'string') s.pad = v.pad;
         if (typeof v.dtext === 'string') s.dtext = v.dtext.slice(0, 2000);
-        if (Array.isArray(v.combo) && v.combo.length) s.combo = sanitizeCombo(v.combo);
-        s.mine = (m.mine || []).filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string' && Array.isArray(x.seq))
+        if (Array.isArray(v.combo)) s.combo = sanitizeCombo(v.combo);
+        s.mine = (Array.isArray(m.mine) ? m.mine : []).filter((x) => x && typeof x.id === 'string' && typeof x.name === 'string' && Array.isArray(x.seq))
           .map((x) => ({ id: x.id, name: x.name.slice(0, 80), seq: sanitizeCombo(x.seq), updated: Number.isFinite(x.updated) ? x.updated : 1 }));
-        s.gone = (m.gone || []).filter((g) => g && typeof g.id === 'string' && Number.isFinite(g.at));
+        s.gone = (Array.isArray(m.gone) ? m.gone : []).filter((g) => g && typeof g.id === 'string' && Number.isFinite(g.at));
         s.curMine = typeof v.curMine === 'string' && s.mine.some((x) => x.id === v.curMine) ? v.curMine : null;
         s.stamps = Object.assign({}, m.at || {});
         SYNC_KEYS.forEach((k) => { snap[k] = JSON.stringify(s[k]); });
-        if (JSON.stringify(s.combo) !== comboBefore) s.hist = [];      // 谱子被换掉了，旧的撤销历史作废
+        if (JSON.stringify(s.combo) !== comboBefore) { s.hist = []; comboCache = null; }
         save();
       } finally { applyingRemote = false; }
       $('cdSec').value = String(s.cdSec);
@@ -2233,7 +2424,6 @@
 
   // 应用更新：新版本的服务进程接管后自动刷新一次；正在播放就等停下再刷，不打断练习
   const AppUpdate = { pending: false };
-  const busyPlaying = () => playing || !!(window.SongUI && window.SongUI.playing && window.SongUI.playing());
   AppUpdate.tryReload = () => { if (AppUpdate.pending && !busyPlaying()) location.reload(); };
   window.AppUpdate = AppUpdate;
   if ('serviceWorker' in navigator) {
@@ -2251,13 +2441,15 @@
   // 设置里的“更新到最新版”：只清程序缓存，不动你保存的谱和设置
   const forceBtn = $('forceUpdate');
   if (forceBtn) forceBtn.addEventListener('click', async () => {
+    if (busyPlaying()) { showToast('请先停止播放，再更新应用。'); return; }
     forceBtn.disabled = true;
     forceBtn.textContent = '更新中…';
     try {
       const regs = await navigator.serviceWorker.getRegistrations();
-      await Promise.all(regs.map((r) => r.unregister()));
+      const scope = new URL('./', location.href).href;
+      await Promise.all(regs.filter((r) => r.scope === scope).map((r) => r.unregister()));
       const keys = await caches.keys();
-      await Promise.all(keys.map((k) => caches.delete(k)));
+      await Promise.all(keys.filter((k) => k.startsWith('drum-metronome-v')).map((k) => caches.delete(k)));
     } catch (e) { /* ignore */ }
     location.reload();
   });

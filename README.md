@@ -18,6 +18,7 @@
 ## 开发
 
 - 无构建步骤，纯静态文件；本地预览：`node scripts/serve.js`，打开 http://localhost:5173
+- 测试：`node --test "tests/*.test.cjs"`（无需安装依赖）；项目细节和真机验收清单见 `AGENTS.md`
 - 改了任何预缓存文件都要改 `service-worker.js` 里的 `CACHE_NAME`
 - `vendor/alphatab/` 是 alphaTab 1.8.4（MPL-2.0），字体 Bravura（OFL），音色 Sonivox（Apache-2.0）；`vendor/qrcode/` 是 qrcode-generator 2.0.4（MIT），用于扫码配对
 - 版权歌曲的谱文件不要放进这个公开仓库

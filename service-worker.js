@@ -1,5 +1,5 @@
 // 离线外壳：联网时总取最新版，断网用缓存。每次改动任何预缓存文件都要改 CACHE_NAME。
-const CACHE_NAME = 'drum-metronome-v46';
+const CACHE_NAME = 'drum-metronome-v47';
 const PRECACHE = [
   './',
   'index.html',
@@ -30,7 +30,7 @@ self.addEventListener('install', (event) => {
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(
-      keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k))
+      keys.filter((k) => k.startsWith('drum-metronome-v') && k !== CACHE_NAME).map((k) => caches.delete(k))
     )).then(() => self.clients.claim())
   );
 });

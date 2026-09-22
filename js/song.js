@@ -202,16 +202,20 @@
 
   // ---------- 云端谱库：谱文件放在你自己账号下的另一个秘密 Gist，多台设备共用 ----------
   // 每个谱一个文件 s-<id>.json（内含 base64）。本地记录带 synced 标记：
-  //   云端没有而本地标了 synced → 别的设备删了，本地也删；本地没标 synced → 还没上传，去上传；
+  //   同一个已确认的 syncedGist 中明确缺少文件 → 别的设备删了；换库或旧记录缺少来源时优先保留本机。
   //   本地删除的记在 GONE_KEY 里，下次同步时从云端删掉。
   const SONG_DESC = 'drum-metronome-songs（练习谱文件，请勿删除）';
   const GONE_KEY = 'metronome-song-gone';
   const MAX_CLOUD = 700 * 1024;      // 单个谱超过这个大小不上传
-  const readGone = () => { try { return JSON.parse(localStorage.getItem(GONE_KEY)) || []; } catch (e) { return []; } };
+  const readGone = () => { try { const a = JSON.parse(localStorage.getItem(GONE_KEY)); return Array.isArray(a) ? a.filter((id) => typeof id === 'string') : []; } catch (e) { return []; } };
   const writeGone = (a) => { try { localStorage.setItem(GONE_KEY, JSON.stringify(a)); } catch (e) { /* ignore */ } };
   const toB64 = (buf) => { const u = new Uint8Array(buf); let b = ''; for (let i = 0; i < u.length; i += 0x8000) b += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000)); return btoa(b); };
   const fromB64 = (t) => { const b = atob(t); const u = new Uint8Array(b.length); for (let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u.buffer; };
   let cloudBusy = false, cloudAgain = false;
+  let cloudRetry = null;
+  const playbackBusy = () => playingNow || !!(window.SyncBridge && window.SyncBridge.isPlaying());
+  function requireIdle() { if (playbackBusy()) throw new Error('playing'); }
+  function retryWhenIdle() { clearTimeout(cloudRetry); cloudRetry = setTimeout(() => cloudSync(), 4000); }
 
   const cloudOn = () => !!(window.CloudApi && window.CloudApi.hasToken());
   function cloudSay(t) { const el = $('songCloud'); if (el) el.textContent = t; }
@@ -227,7 +231,9 @@
   }
   async function cloudSync(retried) {
     if (!cloudOn()) { cloudSay('开启设置里的“云同步”后，谱文件也能在多台设备间共用。'); return; }
+    if (playbackBusy()) { cloudSay('播放结束后同步谱文件'); retryWhenIdle(); return; }
     if (cloudBusy) { cloudAgain = true; return; }
+    clearTimeout(cloudRetry);
     cloudBusy = true;
     cloudSay('谱文件同步中…');
     let added = 0, removed = 0, skipped = 0, redo = false;
@@ -243,20 +249,38 @@
       try { g = await A.call('/gists/' + gid); }
       catch (e) { if (e.kind === 'notfound' && !retried) { A.setSongsGist(''); redo = true; } else throw e; }
       if (!redo) {
-        const remote = {};
+        if (!g.files || typeof g.files !== 'object' || g.truncated) throw new Error('incomplete');
+        const remote = Object.create(null);
+        // 内容损坏的云端文件：按文件名记下编号，当作“云端还在”（不删本机），也不下载；
+        // 本机若有完好副本，下面的上传步骤会自动把它覆盖修好。下载失败则整轮取消，下次再试。
+        const broken = new Set();
         for (const [fn, f] of Object.entries(g.files || {})) {
-          if (!/^s-.+[.]json$/.test(fn)) continue;
+          const m = /^s-(.+)[.]json$/.exec(fn);
+          if (!m) continue;
+          requireIdle();
+          let text = f.content;
+          if (f.truncated) {
+            if (!f.raw_url) throw new Error('incomplete');
+            const response = await fetch(f.raw_url, { cache: 'no-store' });
+            if (!response.ok) throw new Error('download');
+            text = await response.text();
+          }
           try {
-            const text = f.truncated && f.raw_url ? await (await fetch(f.raw_url, { cache: 'no-store' })).text() : f.content;
             const o = JSON.parse(text);
-            if (o && typeof o.id === 'string' && typeof o.data === 'string') remote[o.id] = o;
-          } catch (e) { /* 坏文件跳过 */ }
+            if (!o || typeof o.id !== 'string' || fn !== 's-' + o.id + '.json' || typeof o.data !== 'string' ||
+              o.data.length > Math.ceil(MAX_CLOUD / 3) * 4) throw new Error('invalid');
+            o.buffer = fromB64(o.data);
+            if (o.buffer.byteLength > MAX_CLOUD) throw new Error('invalid');
+            remote[o.id] = o;
+          } catch (e) { broken.add(m[1]); }
         }
         const gone = readGone();
         const patch = {};
         let local = await dbAll();
+        requireIdle();
         for (const r of local) {                                   // 别的设备删了 → 本机也删
-          if (r.synced && !remote[r.id]) {
+          requireIdle();
+          if (r.synced && r.syncedGist === gid && !remote[r.id] && !broken.has(r.id)) {
             await dbDel(r.id); removed++;
             if (curId === r.id) { stop(); curId = ''; $('songBody').hidden = true; $('songTitle').textContent = '曲谱'; }
           }
@@ -264,26 +288,42 @@
         local = await dbAll();
         const uploaded = [];
         for (const r of local) {                                   // 本机新增 → 上传
-          if (r.synced) continue;
+          requireIdle();
+          if (remote[r.id]) {
+            if (r.syncedGist !== gid) await dbPut(Object.assign({}, r, { synced: true, syncedGist: gid }));
+            continue;
+          }
           if (r.data.byteLength > MAX_CLOUD) { skipped++; continue; }
           patch['s-' + r.id + '.json'] = { content: JSON.stringify({ v: 1, id: r.id, name: r.name, added: r.added, data: toB64(r.data) }) };
           uploaded.push(r);
         }
-        gone.forEach((id) => { if (remote[id]) patch['s-' + id + '.json'] = null; });   // 本机删了 → 云端也删
+        gone.forEach((id) => { if (remote[id] || broken.has(id)) patch['s-' + id + '.json'] = null; });   // 本机删了 → 云端也删
+        requireIdle();
         if (Object.keys(patch).length) await A.call('/gists/' + gid, { method: 'PATCH', body: { files: patch } });
-        for (const r of uploaded) await dbPut(Object.assign({}, r, { synced: true }));
-        writeGone([]);
+        for (const r of uploaded) {
+          requireIdle();
+          const current = await dbGet(r.id);
+          if (current) await dbPut(Object.assign({}, current, { synced: true, syncedGist: gid }));
+          else { writeGone([...new Set(readGone().concat(r.id))]); cloudAgain = true; }
+        }
+        // 网络等待期间可能又删了谱，只清除这一轮已经处理过的删除记录。
+        writeGone(readGone().filter((id) => !gone.includes(id)));
         const have = new Set(local.map((r) => r.id));
         for (const o of Object.values(remote)) {                   // 云端新增 → 下载
-          if (have.has(o.id) || gone.includes(o.id)) continue;
-          await dbPut({ id: o.id, name: String(o.name || '未命名').slice(0, 60), data: fromB64(o.data), added: Number(o.added) || Date.now(), synced: true });
+          requireIdle();
+          if (have.has(o.id) || gone.includes(o.id) || readGone().includes(o.id)) continue;
+          await dbPut({ id: o.id, name: String(o.name || '未命名').slice(0, 60), data: o.buffer, added: Number(o.added) || Date.now(), synced: true, syncedGist: gid });
           added++;
         }
-        cloudSay('谱文件已同步' + (added ? '，新增 ' + added + ' 份' : '') + (removed ? '，移除 ' + removed + ' 份' : '') + (skipped ? '（' + skipped + ' 份太大没上传）' : ''));
+        const repaired = [...broken].filter((id) => uploaded.some((r) => r.id === id)).length;
+        const lost = broken.size - repaired - gone.filter((id) => broken.has(id)).length;
+        cloudSay('谱文件已同步' + (added ? '，新增 ' + added + ' 份' : '') + (removed ? '，移除 ' + removed + ' 份' : '') + (skipped ? '（' + skipped + ' 份太大没上传）' : '') +
+          (repaired ? '，修复了 ' + repaired + ' 份损坏的云端谱' : '') + (lost > 0 ? '；云端有 ' + lost + ' 份谱已损坏，已跳过' : ''));
         renderList();
       }
     } catch (e) {
-      cloudSay(e && e.kind === 'auth' ? '令牌失效，请在设置里更换' : e && e.kind === 'network' ? '网络不通，谱文件暂未同步' : '谱文件同步失败，稍后再试');
+      if (e.message === 'playing') { cloudSay('播放结束后同步谱文件'); retryWhenIdle(); }
+      else cloudSay(e && e.kind === 'auth' ? '令牌失效，请在设置里更换' : e && e.kind === 'network' ? '网络不通，谱文件暂未同步' : '谱文件未能完整读取或同步，本机曲谱已保留，请稍后再试');
     } finally {
       cloudBusy = false;
     }

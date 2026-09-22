@@ -12,21 +12,62 @@
   const GROUPS = [['beats', 'subdiv', 'cells']];   // 这几项互相依赖，必须整组一起取新的那边
 
   // ---------- 合并（纯函数，不碰界面和网络） ----------
-  const stampOf = (side, k) => (side && side.at && Number(side.at[k])) || 0;
+  const stampOf = (side, k) => side && side.at && Number.isFinite(side.at[k]) && side.at[k] >= 0 ? side.at[k] : 0;
   const created = (id) => parseInt(String(id).slice(0, 8), 36) || 0;
+  function normalize(side) {
+    side = side && typeof side === 'object' ? side : {};
+    return {
+      v: side.v && typeof side.v === 'object' && !Array.isArray(side.v) ? side.v : {},
+      at: side.at && typeof side.at === 'object' && !Array.isArray(side.at) ? side.at : {},
+      mine: (Array.isArray(side.mine) ? side.mine : []).filter((m) => m && typeof m.id === 'string' && typeof m.name === 'string' && Array.isArray(m.seq))
+        .map((m) => ({ ...m, updated: Number.isFinite(m.updated) && m.updated > 0 ? m.updated : 1 })),
+      gone: (Array.isArray(side.gone) ? side.gone : []).filter((g) => g && typeof g.id === 'string' && Number.isFinite(g.at) && g.at >= 0)
+    };
+  }
+  const rank = (value) => value === undefined ? '~' : JSON.stringify(canon(value));
+
+  function mergeFields(group, L, R, v, at) {
+    const fields = window.SyncBridge && window.SyncBridge.fields;
+    if (!fields) return false; // 旧版主脚本仍可按原有整组方式合并
+    const le = fields.entries(group, L.v[group]), re = fields.entries(group, R.v[group]);
+    const keys = new Set([...Object.keys(le), ...Object.keys(re)]), prefix = '@' + group + '/';
+    [L, R].forEach((side) => Object.keys(side.at).forEach((k) => {
+      if (k.startsWith(prefix)) { try { keys.add(decodeURIComponent(k.slice(prefix.length))); } catch (e) { /* 忽略坏字段 */ } }
+    }));
+    const result = Object.create(null);
+    keys.forEach((key) => {
+      const stamp = fields.stampKey(group, key);
+      const time = (side, entries) => Number.isFinite(side.at[stamp]) ? stampOf(side, stamp)
+        : Object.hasOwn(entries, key) ? stampOf(side, group) : -1;
+      const lt = time(L, le), rt = time(R, re);
+      const winner = rt > lt || (rt === lt && rank(re[key]) > rank(le[key])) ? re : le;
+      if (Object.hasOwn(winner, key)) result[key] = winner[key];
+      if (Math.max(lt, rt) >= 0) at[stamp] = Math.max(lt, rt);
+    });
+    if (group === 'tempos') v[group] = result;
+    else {
+      const speeds = Object.create(null), prefs = {};
+      Object.keys(result).forEach((k) => { if (k.startsWith('speed:')) speeds[k.slice(6)] = result[k]; else prefs[k] = result[k]; });
+      v[group] = { ...prefs, speeds };
+    }
+    at[group] = Math.max(stampOf(L, group), stampOf(R, group));
+    return true;
+  }
 
   function merge(L, R, now = Date.now()) {
+    L = normalize(L); R = normalize(R);
     const v = {}, at = {}, done = new Set();
     const keys = Object.keys(L.v || {});      // 以本机认识的项为准，云端多出来的旧项直接丢弃
     keys.forEach((k) => {
       if (done.has(k)) return;
+      if ((k === 'tempos' || k === 'songPref') && mergeFields(k, L, R, v, at)) { done.add(k); return; }
       const group = GROUPS.find((g) => g.includes(k)) || [k];
       const has = (side) => group.every((g) => side.v && g in side.v);
       const top = (side) => Math.max(0, ...group.map((g) => stampOf(side, g)));
       let win;
       if (!has(R)) win = L;
       else if (!has(L)) win = R;
-      else win = top(R) > top(L) ? R : L;          // 平手留本地，避免来回抖动
+      else win = top(R) > top(L) || (top(R) === top(L) && rank(group.map((g) => R.v[g])) > rank(group.map((g) => L.v[g]))) ? R : L;
       group.forEach((g) => {
         done.add(g);
         if (win.v && g in win.v) { v[g] = win.v[g]; if (stampOf(win, g)) at[g] = stampOf(win, g); }
@@ -38,7 +79,7 @@
     const best = new Map();
     [...(L.mine || []), ...(R.mine || [])].forEach((m) => {
       const cur = best.get(m.id);
-      if (!cur || (m.updated || 1) > (cur.updated || 1)) best.set(m.id, m);
+      if (!cur || m.updated > cur.updated || (m.updated === cur.updated && rank(m) > rank(cur))) best.set(m.id, m);
     });
     const mine = [];
     best.forEach((m, id) => {
@@ -59,7 +100,7 @@
   const canon = (x) => {
     if (Array.isArray(x)) return x.map(canon);
     if (x && typeof x === 'object') {
-      const o = {};
+      const o = Object.create(null);
       Object.keys(x).sort().forEach((k) => { o[k] = canon(x[k]); });
       return o;
     }
@@ -71,7 +112,7 @@
     gone: (st.gone || []).slice().sort((a, b) => (a.id < b.id ? -1 : 1))
   }));
 
-  window.SyncCore = { merge, sig };
+  window.SyncCore = { merge, sig, normalize };
 
   // ---------- 设置存取 ----------
   let cfg = { token: '', gistId: '', songsGist: '', last: 0 };
@@ -129,17 +170,12 @@
     if (!f) throw new ApiError('notfound', 404);
     let text = f.content;
     if (f.truncated && f.raw_url) {
-      try { text = await (await fetch(f.raw_url, { cache: 'no-store' })).text(); } catch (e) { throw new ApiError('network'); }
+      try { const response = await fetch(f.raw_url, { cache: 'no-store' }); if (!response.ok) throw new Error('download'); text = await response.text(); } catch (e) { throw new ApiError('network'); }
     }
     let data;
     try { data = JSON.parse(text); } catch (e) { data = null; }
-    if (!data || typeof data !== 'object') return { v: {}, at: {}, mine: [], gone: [] };
-    return {
-      v: data.v && typeof data.v === 'object' ? data.v : {},
-      at: data.at && typeof data.at === 'object' ? data.at : {},
-      mine: Array.isArray(data.mine) ? data.mine : [],
-      gone: Array.isArray(data.gone) ? data.gone : []
-    };
+    if (!data || typeof data !== 'object' || Array.isArray(data) || !data.v || typeof data.v !== 'object') throw new ApiError('invalid');
+    return normalize(data);
   }
 
   // ---------- 一次同步 ----------
