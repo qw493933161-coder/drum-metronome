@@ -302,6 +302,7 @@
   // 二维码里是令牌和两个 Gist 的编号，只在屏幕上显示、不上传、不写日志；两分钟后自动关掉。
   const PAIR_PREFIX = 'DRUMSYNC1:';
   let pairTimer = null, pairStream = null, pairLoop = null;
+  let pairGeneration = 0; // 关闭或重开后，旧的授权/识别结果不能再启动摄像头或加入同步
   const pairEl = (id) => $(id);
   function openPair(title, tip) {
     pairEl('pairTitle').textContent = title;
@@ -309,6 +310,7 @@
     pairEl('pair').hidden = false;
   }
   function closePair() {
+    pairGeneration++;
     clearTimeout(pairTimer);
     clearInterval(pairLoop); pairLoop = null;
     if (pairStream) { pairStream.getTracks().forEach((t) => t.stop()); pairStream = null; }
@@ -327,8 +329,11 @@
   }
   async function showPairCode() {
     if (!cfg.token) return;
+    closePair();
+    const generation = pairGeneration;
     if (!cfg.gistId) { await sync(); }                 // 先确保云端已经建好，扫码的设备才能直接接上
     try { await loadQrLib(); } catch (e) { say('二维码组件没加载出来，检查网络后重试'); return; }
+    if (generation !== pairGeneration) return;
     const payload = PAIR_PREFIX + btoa(JSON.stringify({ t: cfg.token, g: cfg.gistId || '', s: cfg.songsGist || '' }));
     const qr = window.qrcode(0, 'M');
     qr.addData(payload);
@@ -361,10 +366,15 @@
     }
     let detector;
     try { detector = new window.BarcodeDetector({ formats: ['qr_code'] }); } catch (e) { say('这个浏览器不支持扫二维码，请用粘贴令牌的方式。'); return; }
+    closePair();
+    const generation = pairGeneration;
     openPair('对准另一台设备上的二维码', '在已经开了同步的设备上：设置 → 云同步 → “添加设备”。');
     try {
-      pairStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+      if (generation !== pairGeneration) { stream.getTracks().forEach((t) => t.stop()); return; }
+      pairStream = stream;
     } catch (e) {
+      if (generation !== pairGeneration) return;
       closePair();
       say('没能打开摄像头。请在浏览器里允许这个网站使用摄像头，再点一次“扫码加入同步”。');
       return;
@@ -372,12 +382,14 @@
     const v = pairEl('pairVideo');
     v.srcObject = pairStream; v.hidden = false;
     try { await v.play(); } catch (e) { /* 部分浏览器需要再点一下，下面的检测照样进行 */ }
+    if (generation !== pairGeneration) return;
     let busy = false;
     pairLoop = setInterval(async () => {
-      if (busy || v.readyState < 2) return;
+      if (generation !== pairGeneration || busy || v.readyState < 2) return;
       busy = true;
       try {
         const codes = await detector.detect(v);
+        if (generation !== pairGeneration) return;
         for (const code of codes) {
           const p = parsePair(code.rawValue);
           if (p) {

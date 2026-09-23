@@ -44,6 +44,7 @@
 
   // ---------- alphaTab ----------
   let api = null, loading = null, score = null, curId = '', readyPlay = false, playingNow = false;
+  let loadFailed = false;
 
   function loadLib() {
     if (window.alphaTab) return Promise.resolve();
@@ -73,12 +74,23 @@
       },
       player: { enablePlayer: true, soundFont: BASE + 'soundfont/sonivox.sf2', scrollElement: $('songScroll'), enableCursor: true }
     });
-    api.scoreLoaded.on((sc) => { score = sc; onScore(); });
+    api.scoreLoaded.on((sc) => { if (loadFailed) return; score = sc; onScore(); refreshPlay(); });
     api.renderFinished.on(() => { $('songScroll').classList.remove('busy'); });
-    api.playerReady.on(() => { readyPlay = true; applyPlayerPrefs(); say(''); refreshPlay(); });
+    api.playerReady.on(() => { if (loadFailed) return; readyPlay = true; applyPlayerPrefs(); say(''); refreshPlay(); });
     api.playerStateChanged.on((e) => { playingNow = e.state === 1; if (!playingNow && window.KeepAlive) window.KeepAlive.off(); if (!playingNow && window.AppUpdate) setTimeout(window.AppUpdate.tryReload, 300); refreshPlay(); });
-    api.error.on((e) => { say('打开失败：这个文件可能不是有效的乐谱，或格式暂不支持'); void e; $('songScroll').classList.remove('busy'); });
+    api.error.on(() => failLoad());
     readyPlay = false;
+  }
+
+  function failLoad() {
+    stop();
+    loadFailed = true;
+    score = null;
+    readyPlay = false;
+    $('songBody').hidden = true; // 旧谱不能以新文件的标题继续显示或播放
+    $('songScroll').classList.remove('busy');
+    say('打开失败：这个文件可能不是有效的乐谱，或格式暂不支持，请重新选择谱文件');
+    refreshPlay();
   }
 
   function onScore() {
@@ -163,6 +175,8 @@
     try { await loadLib(); } catch (e) { say('播放器组件没加载出来，检查一下网络后重试'); return; }
     ensureApi();
     stop();
+    loadFailed = false;
+    score = null;
     curId = rec.id;
     pref.last = rec.id; savePref();
     $('songTitle').textContent = rec.name;
@@ -174,8 +188,8 @@
     $('songScroll').classList.add('busy');
     $('songScroll').scrollTop = 0;
     readyPlay = !!api.isReadyForPlayback;
-    try { api.load(new Uint8Array(rec.data)); } catch (e) { say('打开失败：这个文件可能不是有效的乐谱'); $('songScroll').classList.remove('busy'); }
     say(readyPlay ? '' : '音色加载中，几秒后可以播放…');
+    try { if (api.load(new Uint8Array(rec.data)) === false) failLoad(); } catch (e) { failLoad(); }
     renderList();
     refreshPlay();
   }
@@ -440,7 +454,13 @@
     });
     $('songCloudBtn').addEventListener('click', () => cloudSync());
     $('songSpeed').addEventListener('change', (e) => setSpeed(Number(e.target.value)));
-    $('songLoop').addEventListener('change', (e) => { if (!e.target.checked && loopRange) clearLoop(); setSp({ loop: e.target.checked }); applyPlayerPrefs(); });
+    $('songLoop').addEventListener('change', (e) => {
+      const loop = e.target.checked;
+      setSp({ loop });
+      if (!loop && loopRange) clearLoop();
+      applyPlayerPrefs();
+      syncControls();
+    });
     $('songClick').addEventListener('change', (e) => { setSp({ click: e.target.checked }); applyPlayerPrefs(); });
     $('songDrums').addEventListener('change', (e) => { setSp({ drums: e.target.checked }); applyPlayerPrefs(); });
     $('songBand').addEventListener('change', (e) => { setSp({ band: e.target.checked }); applyPlayerPrefs(); });
@@ -466,6 +486,7 @@
     cloudNow() { lastCloud = Date.now(); cloudSync(); },
     playing: () => playingNow,
     async toggle() {
+      if (loadFailed) { say('打开失败，请重新选择有效的谱文件'); return; }
       if (!api || !score) { say('先选一份谱文件'); return; }
       if (!readyPlay) { say('音色还在加载，稍等几秒'); return; }
       applyPlayerPrefs();

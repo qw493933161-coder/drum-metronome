@@ -1,5 +1,5 @@
 // 离线外壳：联网时总取最新版，断网用缓存。每次改动任何预缓存文件都要改 CACHE_NAME。
-const CACHE_NAME = 'drum-metronome-v47';
+const CACHE_NAME = 'drum-metronome-v48';
 const PRECACHE = [
   './',
   'index.html',
@@ -46,20 +46,23 @@ const cacheFirst = async (req) => {
 };
 const networkFirst = async (req) => {
   const cache = await caches.open(CACHE_NAME);
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 3500);
+  let res;
   try {
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 3500);
     // 导航请求不能带 init 再次 fetch，所以用 URL
-    const res = await fetch(req.url, { cache: 'no-cache', credentials: 'same-origin', signal: ctrl.signal });
-    clearTimeout(timer);
+    res = await fetch(req.url, { cache: 'no-cache', credentials: 'same-origin', signal: ctrl.signal });
     if (res.ok) cache.put(req, res.clone());
-    return res;
-  } catch (e) {
-    const hit = await cache.match(req);
-    if (hit) return hit;
-    if (req.mode === 'navigate') { const idx = await cache.match('index.html'); if (idx) return idx; }
-    return Response.error();
+    if (res.status < 500) return res;
+  } catch (e) { /* 断网或超时，尝试已缓存的版本 */
+  } finally {
+    clearTimeout(timer);
   }
+  // 服务端临时故障（5xx）也使用缓存；没有缓存时保留原错误，404 等仍按服务器响应处理。
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  if (req.mode === 'navigate') { const idx = await cache.match('index.html'); if (idx) return idx; }
+  return res || Response.error();
 };
 self.addEventListener('fetch', (event) => {
   const req = event.request;
